@@ -9,7 +9,10 @@ import app.airbox.core.transfer.OutgoingFile
 import app.airbox.core.transfer.ReceiveStorage
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import app.airbox.core.live.IslandAction
 import java.io.Closeable
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -40,6 +43,8 @@ class WebBridge(
     private val onText: (String) -> Unit,
     /** A file was saved (final name). */
     private val onFile: (FileEntry, String) -> Unit = { _, _ -> },
+    /** A button pressed on the iPhone (Dynamic Island / app): e.g. STOP_RING, DECLINE_CALL. */
+    private val onAction: (IslandAction, String?) -> Unit = { _, _ -> },
     port: Int = 0,
     bindAddress: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -52,7 +57,7 @@ class WebBridge(
     }
     val port: Int get() = server.localPort
     private val running = AtomicBoolean(true)
-    private val pool = Executors.newFixedThreadPool(6) { r -> Thread(r, "airbox-web").apply { isDaemon = true } }
+    private val pool = Executors.newFixedThreadPool(16) { r -> Thread(r, "airbox-web").apply { isDaemon = true } }
     private val json = Json { encodeDefaults = true }
 
     private class Expiring(val expiresAt: Long)
@@ -66,6 +71,15 @@ class WebBridge(
     private class Shared(val info: SharedFileInfo, val file: OutgoingFile)
 
     @Volatile private var sharedText: SharedText? = null
+
+    @Serializable data class Event(val seq: Long, val type: String, val data: JsonElement)
+    @Serializable data class EventPage(val events: List<Event>, val next: Long)
+    @Serializable data class ActionRequest(val action: IslandAction, val target: String? = null)
+    @Serializable data class AppPairing(val key: String, val deviceName: String)
+
+    private val events = ArrayDeque<Event>()
+    private val eventLock = Object()
+    private var nextSeq = 1L
     private val sharedFiles = ConcurrentHashMap<String, Shared>()
 
     fun start(): WebBridge {
@@ -89,11 +103,47 @@ class WebBridge(
     fun revokeAllSessions() { sessions.clear(); visitTokens.clear() }
 
     /** Text the iPhone can copy from the page (Android -> iPhone clipboard). */
-    fun shareText(text: String) { sharedText = SharedText(text.take(MAX_TEXT), clock()) }
+    fun shareText(text: String) {
+        sharedText = SharedText(text.take(MAX_TEXT), clock())
+        publish("text", json.encodeToJsonElement(SharedText.serializer(), sharedText!!))
+    }
+
+    /**
+     * Pushes a live event to connected iPhone apps (long-poll on /api/events): calls, ringing,
+     * now playing, transfer progress. [data] is usually an encoded IslandItem.
+     */
+    fun publish(type: String, data: JsonElement) {
+        synchronized(eventLock) {
+            events.addLast(Event(nextSeq++, type, data))
+            while (events.size > MAX_EVENTS) events.removeFirst()
+            eventLock.notifyAll()
+        }
+    }
+
+    /** Shows (or updates) an item on the iPhone's Dynamic Island via the Airbox iPhone app. */
+    fun publishIsland(item: app.airbox.core.live.IslandItem) =
+        publish("island", json.parseToJsonElement(app.airbox.core.live.IslandModel.encode(item)))
+
+    fun endIsland(id: String) = publish("island_end", json.parseToJsonElement("""{"id":${json.encodeToString(id)}}"""))
+
+    private fun eventsAfter(after: Long, waitMs: Long): EventPage {
+        val deadline = clock() + waitMs
+        synchronized(eventLock) {
+            while (true) {
+                val fresh = events.filter { it.seq > after }
+                if (fresh.isNotEmpty()) return EventPage(fresh, fresh.last().seq)
+                val left = deadline - clock()
+                if (left <= 0 || !running.get()) return EventPage(emptyList(), maxOf(after, nextSeq - 1))
+                eventLock.wait(minOf(left, 1_000))
+            }
+        }
+    }
 
     fun shareFile(file: OutgoingFile): String {
         val id = randomBytes(9).toBase64Url()
-        sharedFiles[id] = Shared(SharedFileInfo(id, file.name, file.size, file.mimeType), file)
+        val info = SharedFileInfo(id, file.name, file.size, file.mimeType)
+        sharedFiles[id] = Shared(info, file)
+        publish("file", json.encodeToJsonElement(SharedFileInfo.serializer(), info))
         return id
     }
 
@@ -138,6 +188,7 @@ class WebBridge(
         }
 
         if (req.method == "GET" && req.path == "/" && req.query["t"] != null) return redeemVisit(req)
+        if (req.method == "POST" && req.path == "/api/app-pair") return pairApp(req)
 
         val authed = sessionValid(req.cookies["airbox_sid"]) || bearerValid(req)
         if (!authed) {
@@ -161,6 +212,17 @@ class WebBridge(
             req.method == "POST" && req.path == "/api/upload" -> receiveFile(req)
             req.method == "GET" && req.path == "/api/files" -> HttpResponse.json(json.encodeToString(sharedFiles.values.map { it.info }))
             req.method == "GET" && req.path.startsWith("/api/files/") -> download(req.path.removePrefix("/api/files/"))
+            req.method == "GET" && req.path == "/api/events" -> {
+                val after = req.query["after"]?.toLongOrNull() ?: 0
+                val wait = (req.query["wait"]?.toLongOrNull() ?: 25).coerceIn(0, 25) * 1000
+                HttpResponse.json(json.encodeToString(eventsAfter(after, wait)))
+            }
+            req.method == "POST" && req.path == "/api/action" -> {
+                val request = runCatching { json.decodeFromString<ActionRequest>(req.readBodyText(4_096)) }
+                    .getOrElse { throw HttpError(400, "Bad action") }
+                onAction(request.action, request.target)
+                HttpResponse.empty()
+            }
             else -> HttpResponse.text(404, "Not found")
         }
     }
@@ -179,6 +241,23 @@ class WebBridge(
         return HttpResponse.redirect("/").apply {
             headers["Set-Cookie"] = "airbox_sid=$sid; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_MS / 1000}"
         }
+    }
+
+    /**
+     * The Airbox iPhone app scanned the QR code: trade the single-use token for a long-lived,
+     * revocable key (the same kind a Shortcut uses).
+     */
+    private fun pairApp(req: HttpRequest): HttpResponse {
+        if (req.header("x-airbox") != "1") throw HttpError(403, "Missing header")
+        val token = req.query["t"] ?: throw HttpError(400, "Missing token")
+        val match = visitTokens.keys.firstOrNull { constantTimeEquals(it, token) }
+        val entry = match?.let { visitTokens.remove(it) }
+        if (entry == null || entry.expiresAt <= clock()) {
+            recordFailure(req.remoteAddress)
+            return HttpResponse.text(401, "This code has expired. Show a new one on the Android phone.")
+        }
+        val name = req.query["name"]?.take(60)?.ifBlank { null } ?: "iPhone app"
+        return HttpResponse.json(json.encodeToString(AppPairing(createShortcutKey(name), deviceName)))
     }
 
     private fun sessionValid(sid: String?): Boolean {
@@ -272,12 +351,14 @@ class WebBridge(
 
     override fun close() {
         running.set(false)
+        synchronized(eventLock) { eventLock.notifyAll() }
         runCatching { server.close() }
         pool.shutdownNow()
     }
 
     companion object {
         const val MAX_TEXT = 256 * 1024
+        const val MAX_EVENTS = 200
         const val SESSION_MS = 12 * 60 * 60_000L
         const val MAX_FAILURES = 10
         const val LOCKOUT_WINDOW_MS = 5 * 60_000L

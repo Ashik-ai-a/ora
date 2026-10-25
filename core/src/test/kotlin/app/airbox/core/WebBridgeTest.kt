@@ -27,10 +27,11 @@ class WebBridgeTest {
     private val tmp = Files.createTempDirectory("airbox-web")
     private val out = Files.createDirectories(tmp.resolve("in"))
     private val texts = LinkedBlockingQueue<String>()
+    private val actions = LinkedBlockingQueue<Pair<app.airbox.core.live.IslandAction, String?>>()
     private var storage: ReceiveStorage = DirectoryReceiveStorage(out)
     private val bridge = WebBridge(object : ReceiveStorage by DirectoryReceiveStorage(out) {
         override fun freeBytes() = storage.freeBytes()
-    }, "Pixel 9", onText = { texts += it }, bindAddress = "127.0.0.1").start()
+    }, "Pixel 9", onText = { texts += it }, onAction = { a, t -> actions += a to t }, bindAddress = "127.0.0.1").start()
     private val http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
     private val base get() = "http://127.0.0.1:${bridge.port}"
 
@@ -142,6 +143,49 @@ class WebBridgeTest {
         assertTrue("script-src 'self'" in r.headers().firstValue("Content-Security-Policy").get())
         assertEquals("no-store", r.headers().firstValue("Cache-Control").get())
         assertEquals("nosniff", r.headers().firstValue("X-Content-Type-Options").get())
+    }
+
+    private fun pairApp(url: String = bridge.pairingUrl("127.0.0.1")): HttpResponse<String> {
+        val token = url.substringAfter("t=")
+        return post("/api/app-pair?t=$token&name=Ana%27s%20iPhone", ByteArray(0))
+    }
+
+    @Test fun iphoneAppPairsOnceAndGetsAKey() {
+        val r = pairApp()
+        assertEquals(200, r.statusCode())
+        val key = Regex("\"key\":\"([^\"]+)\"").find(r.body())!!.groupValues[1]
+        assertTrue("\"deviceName\":\"Pixel 9\"" in r.body())
+        assertEquals(204, post("/api/text", "pasted in app".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals("pasted in app", texts.poll(2, TimeUnit.SECONDS))
+        assertEquals(401, pairApp("t=used").statusCode())
+    }
+
+    @Test fun eventFeedDeliversLiveUpdatesWithLongPoll() {
+        val key = bridge.createShortcutKey("app")
+        val getEvents = { after: Long, wait: Int ->
+            http.send(HttpRequest.newBuilder(URI("$base/api/events?after=$after&wait=$wait")).header("Authorization", "Bearer $key").GET().build(),
+                HttpResponse.BodyHandlers.ofString())
+        }
+        assertEquals("""{"events":[],"next":0}""", getEvents(0, 0).body())
+        // A long-poll that is waiting gets the event as soon as it's published.
+        val pending = Thread { Thread.sleep(300); bridge.publish("ring", kotlinx.serialization.json.JsonPrimitive("on")) }.apply { start() }
+        val started = System.currentTimeMillis()
+        val r = getEvents(0, 10)
+        pending.join()
+        assertTrue(System.currentTimeMillis() - started < 5_000)
+        assertTrue("\"type\":\"ring\"" in r.body() && "\"next\":1" in r.body())
+        bridge.shareText("hello")
+        assertTrue("\"type\":\"text\"" in getEvents(1, 0).body())
+        assertEquals(401, http.send(HttpRequest.newBuilder(URI("$base/api/events")).GET().build(), HttpResponse.BodyHandlers.discarding()).statusCode())
+    }
+
+    @Test fun islandButtonsReachAndroid() {
+        val key = bridge.createShortcutKey("app")
+        assertEquals(204, post("/api/action", """{"action":"STOP_RING"}""".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(app.airbox.core.live.IslandAction.STOP_RING to null, actions.poll(2, TimeUnit.SECONDS))
+        assertEquals(204, post("/api/action", """{"action":"DECLINE_CALL","target":"c1"}""".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(app.airbox.core.live.IslandAction.DECLINE_CALL to "c1", actions.poll(2, TimeUnit.SECONDS))
+        assertEquals(400, post("/api/action", """{"action":"FORMAT_PHONE"}""".toByteArray(), csrf = false, auth = key).statusCode())
     }
 
     @Test fun wifiQrEscapesSpecialCharacters() {

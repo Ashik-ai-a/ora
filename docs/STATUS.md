@@ -31,16 +31,18 @@ JVM over loopback TLS. **Nothing has been tested on a physical phone yet.**
 | Notification privacy policy (opt-in, hidden content, OTP masking) | `NotificationPolicyTest` |
 | No-app iPhone web bridge: QR sign-in, text and file upload, Android→iPhone text/files, Shortcut keys, CSRF / DNS-rebinding / lockout protection | `WebBridgeTest` (10 tests) |
 | The same page driven in Chromium with iPhone 15 emulation: send text, upload a 3 MB photo, download, copy | Manual Playwright run, files byte-identical. **Not yet run in real iOS Safari.** |
+| Dynamic Island / Live Updates rules (priority, throttle, expiry, 8-hour cap, size cap) | `IslandModelTest` (9 tests) |
+| iPhone app pairing, live event feed (long-poll), island buttons → Android | `WebBridgeTest` |
 | Desktop CLI sender/receiver works end to end | Manual: 20 MB + text file over TLS, byte-identical (`cmp`) |
 
-Run them: `gradle test` (63 tests).
+Run them: `gradle test` (75 tests).
 
 ## Not built yet (and why)
 
 | Item | Status |
 |---|---|
 | Android app (Compose UI, Sharesheet target, foreground receive service, NSD, MediaStore) | **Not started.** The Android SDK can't be downloaded in the environment this was built in, so nothing Android-specific could be compiled. `:core` is plain Kotlin/JVM targeting Java 17 bytecode, so an Android module can depend on it directly. |
-| iOS app (SwiftUI, Share Extension, Bonjour, Swift port of the protocol) | **Not started.** It needs macOS/Xcode. `docs/PROTOCOL.md` is written so the port can be done against the CLI. |
+| iOS app | **Written, not compiled** (`ios/`): pairing, Paste & Send, photos, Dynamic Island. Missing: Share Extension, the TLS protocol path, background BLE link. The island only updates from Android while the app is open or recently used. |
 | LAN discovery (mDNS) | Specified (PROTOCOL §5), not implemented. The CLI uses the QR link or a manual address. |
 | Wi-Fi Aware, Wi-Fi Direct, hotspot, BLE, NFC transports | Planned in `ConnectionPlanner`; no radio code exists. Wi-Fi Aware iPhone ↔ Android is the top-priority spike. |
 | Quick Share coexistence | Only possible as an ordinary share target; nothing to build beyond the Android Sharesheet target. |

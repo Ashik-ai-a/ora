@@ -17,6 +17,8 @@ before assuming anything works on a phone.
 | `docs/FEASIBILITY.md` | Platform reality check, compatibility matrix, architecture decision. **Start here.** |
 | `docs/COMPANION.md` | Linked-devices features (notifications, calls, replies, media, clipboard, find device): what's possible between Android and iPhone and what isn't. |
 | `docs/NO_APP_IPHONE.md` | iPhone with **no app**: AirDrop → Quick Share, the Safari page, and Shortcuts/Back Tap for clipboard. |
+| `docs/DYNAMIC_ISLAND.md` | Optional iPhone app: one-tap Paste & Send, and what goes on the Dynamic Island (and Android 16 Live Updates). |
+| `ios/` | iPhone app source (SwiftUI + Live Activities). Written but **not yet compiled**; see `ios/README.md`. |
 | `docs/PROTOCOL.md` | Wire spec both apps implement. |
 | `docs/SECURITY.md` | Threat model and known gaps. |
 | `docs/STATUS.md` | What works, what's tested, what isn't built, device test plan. |
@@ -26,7 +28,7 @@ before assuming anything works on a phone.
 Requires JDK 17+ and Gradle 8.x.
 
 ```sh
-gradle test                 # 63 unit + end-to-end tests
+gradle test                 # 75 unit + end-to-end tests
 gradle :cli:installDist     # builds cli/build/install/airbox/bin/airbox
 ```
 
