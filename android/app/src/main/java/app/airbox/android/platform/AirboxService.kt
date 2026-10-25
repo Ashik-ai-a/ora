@@ -34,6 +34,7 @@ class AirboxService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AirboxState.attachRecentStore(File(filesDir, "recent.json"))
         Notifications.createChannels(this)
         goForeground(Net.localAddress(this))
         startBridge()
@@ -125,7 +126,8 @@ class AirboxService : Service() {
                         PendingIntent.FLAG_IMMUTABLE)
                 }
                 Notifications.fileReceived(this, savedAs, open)
-                AirboxState.addRecent(RecentTransfer(savedAs, incoming = true, sizeBytes = entry.size, atEpochMs = System.currentTimeMillis()))
+                AirboxState.addRecent(RecentTransfer(savedAs, incoming = true, sizeBytes = entry.size,
+                    atEpochMs = System.currentTimeMillis(), uri = uri?.toString()))
                 AirboxState.update { it.copy(iphoneSeen = true) }
             },
             onAction = { action, target -> handleAction(action, target) },

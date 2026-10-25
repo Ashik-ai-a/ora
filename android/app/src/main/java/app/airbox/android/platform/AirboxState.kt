@@ -1,8 +1,13 @@
 package app.airbox.android.platform
 
+import android.content.Context
+import android.net.Uri
 import app.airbox.core.live.IslandItem
 import app.airbox.core.web.PairedDevice
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -53,13 +58,77 @@ data class RecentTransfer(
     val incoming: Boolean,
     val sizeBytes: Long,
     val atEpochMs: Long,
-)
+    /** Where a received file was saved (Photos / Downloads), so it can be deleted from the list. */
+    val uri: String? = null,
+) {
+    val key: String get() = "$atEpochMs/$name"
+    val canDeleteFile: Boolean get() = incoming && uri != null
+}
 
 object AirboxState {
+    private const val MAX_RECENT = 200
     private val state = MutableStateFlow(AirboxUiState())
     val flow: StateFlow<AirboxUiState> = state.asStateFlow()
+    @Volatile private var recentFile: File? = null
 
     fun update(change: (AirboxUiState) -> AirboxUiState) = state.update(change)
 
-    fun addRecent(item: RecentTransfer) = state.update { it.copy(recent = (listOf(item) + it.recent).take(30)) }
+    /** Newest first, kept across restarts. */
+    fun addRecent(item: RecentTransfer) {
+        state.update { s -> s.copy(recent = (listOf(item) + s.recent).sortedByDescending { it.atEpochMs }.take(MAX_RECENT)) }
+        save()
+    }
+
+    /**
+     * Swipe-to-delete: removes the row and, for a received file, the file itself (from
+     * Photos / Downloads). Airbox created those files, so no extra permission is needed.
+     * Returns false if the file couldn't be deleted (the row stays).
+     */
+    fun deleteRecent(context: Context, item: RecentTransfer): Boolean {
+        if (item.canDeleteFile) {
+            val deleted = runCatching {
+                val uri = Uri.parse(item.uri)
+                if (uri.scheme == "file") File(uri.path ?: "").let { !it.exists() || it.delete() }
+                else context.contentResolver.delete(uri, null, null) >= 0
+            }.getOrDefault(false)
+            if (!deleted) return false
+        }
+        state.update { s -> s.copy(recent = s.recent.filterNot { it.key == item.key }) }
+        save()
+        return true
+    }
+
+    /** Removes the row only, keeping the file. */
+    fun removeRecent(item: RecentTransfer) {
+        state.update { s -> s.copy(recent = s.recent.filterNot { it.key == item.key }) }
+        save()
+    }
+
+    /** Loads the history saved by earlier runs. Call once when the service starts. */
+    fun attachRecentStore(file: File) {
+        recentFile = file
+        val loaded = runCatching {
+            val array = JSONArray(file.readText())
+            (0 until array.length()).map { i ->
+                val o = array.getJSONObject(i)
+                RecentTransfer(o.getString("name"), o.getBoolean("incoming"), o.getLong("size"), o.getLong("at"),
+                    o.optString("uri").ifBlank { null })
+            }
+        }.getOrDefault(emptyList())
+        state.update { s -> s.copy(recent = (s.recent + loaded).distinctBy { it.key }.sortedByDescending { it.atEpochMs }.take(MAX_RECENT)) }
+    }
+
+    private fun save() {
+        val file = recentFile ?: return
+        val array = JSONArray()
+        state.value.recent.forEach { r ->
+            array.put(JSONObject().put("name", r.name).put("incoming", r.incoming).put("size", r.sizeBytes).put("at", r.atEpochMs)
+                .put("uri", r.uri ?: ""))
+        }
+        runCatching {
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(array.toString())
+            tmp.renameTo(file)
+        }
+    }
 }

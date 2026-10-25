@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5AC8FA"/>
+      <stop offset="1" stop-color="#007AFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#bg)"/>
+  <!-- Concentric rings radiating out, open at the bottom (AirDrop-like feel, Airbox's own mark) -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="15" stroke-linecap="round">
+    <path d="M 80.97 203.17 A 82 82 0 1 1 175.03 203.17"/>
+    <path d="M 99.32 176.96 A 50 50 0 1 1 156.68 176.96"/>
+  </g>
+  <!-- The box at the centre: what's being shared -->
+  <rect x="108" y="119" width="40" height="34" rx="9" fill="#FFFFFF"/>
+  <rect x="108" y="129" width="40" height="6" fill="#2F9BFF"/>
+</svg>
