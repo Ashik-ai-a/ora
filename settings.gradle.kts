@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "airbox"
-include(":core", ":cli")
+include(":core", ":cli", ":tools:android-typecheck")

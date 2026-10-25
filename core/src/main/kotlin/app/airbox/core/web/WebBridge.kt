@@ -185,6 +185,8 @@ class WebBridge(
         when (req.path) {
             "/app.js" -> return asset("app.js", "text/javascript; charset=utf-8")
             "/app.css" -> return asset("app.css", "text/css; charset=utf-8")
+            "/favicon.svg" -> return asset("favicon.svg", "image/svg+xml")
+            "/apple-touch-icon.png" -> return asset("apple-touch-icon.png", "image/png")
         }
 
         if (req.method == "GET" && req.path == "/" && req.query["t"] != null) return redeemVisit(req)

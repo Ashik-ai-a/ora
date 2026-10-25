@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Motif from the 256-unit master, scaled by 0.38 and centred inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="0.38" android:scaleY="0.38" android:translateX="5.36" android:translateY="8.02">
+        <path android:pathData="M94.1,106.1 A48,48 0 0,1 161.9,106.1" android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="16" android:strokeLineCap="round" android:fillColor="#00000000" />
+        <path android:pathData="M68.6,80.6 A84,84 0 0,1 187.4,80.6" android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="16" android:strokeLineCap="round" android:fillColor="#00000000" />
+        <path android:pathData="M106,132h44a16,16 0 0,1 16,16v30a16,16 0 0,1 -16,16h-44a16,16 0 0,1 -16,-16v-30a16,16 0 0,1 16,-16z"
+            android:fillColor="#FFFFFFFF" />
+        <path android:pathData="M90,152h76v9h-76z" android:fillColor="#FF2B9BFF" />
+    </group>
+</vector>

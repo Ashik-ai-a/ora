@@ -120,7 +120,7 @@ private struct IslandHalo: View {
                     .monospacedDigit()
                     .contentTransition(.numericText(value: progress))
             }
-            .foregroundStyle(.primary.opacity(0.85))
+            .foregroundStyle(Color.primary.opacity(0.85))
             .padding(.leading, state.phase.isSending ? 10 : 4).padding(.trailing, 10).padding(.vertical, 4)
             .background(.ultraThinMaterial, in: Capsule())
             .offset(y: 32)

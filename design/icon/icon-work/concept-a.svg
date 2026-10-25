@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#64D2FF"/>
+      <stop offset="1" stop-color="#0A84FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="236" height="236" rx="56" fill="url(#bg)"/>
+  <g transform="translate(0 -20)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="16">
+    <!-- ripples leaving the box -->
+    <path d="M 94.1 126.1 A 48 48 0 0 1 161.9 126.1"/>
+    <path d="M 68.6 100.6 A 84 84 0 0 1 187.4 100.6"/>
+  </g>
+  <!-- the box -->
+  <rect x="90" y="132" width="76" height="62" rx="16" fill="#FFFFFF"/>
+  <rect x="90" y="152" width="76" height="9" fill="#2B9BFF"/>
+</svg>

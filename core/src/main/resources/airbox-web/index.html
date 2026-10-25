@@ -4,43 +4,75 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Airbox</title>
 <link rel="stylesheet" href="/app.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 </head>
 <body>
+<div id="banner" role="status" aria-live="polite"><svg class="banner-icon" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="11"/><path class="ok" d="M6.5 11.3l3 3 6-6.6"/><path class="no" d="M7.5 7.5l7 7M14.5 7.5l-7 7"/></svg><span id="toast"></span></div>
+
 <main>
-  <header>
-    <h1>Airbox</h1>
-    <p class="peer"><span class="dot" id="dot"></span><span id="peer">Connecting…</span></p>
-  </header>
+  <h1>Airbox</h1>
 
-  <section class="card">
-    <h2>Send text</h2>
-    <label for="text" class="hint">Touch and hold in the box, then tap <b>Paste</b>.</label>
-    <textarea id="text" rows="4" placeholder="Paste or type here" autocomplete="off" autocapitalize="sentences"></textarea>
-    <button id="sendText" class="primary" type="button">Send to Android</button>
-  </section>
-
-  <section class="card">
-    <h2>Send photos &amp; files</h2>
-    <label id="pickFiles" class="button primary" for="files">Choose photos or files</label>
-    <input id="files" type="file" multiple hidden>
-    <ul id="uploads" class="list"></ul>
-  </section>
-
-  <section class="card">
-    <h2>From Android</h2>
-    <div id="incomingTextBox" hidden>
-      <pre id="incomingText"></pre>
-      <button id="copy" type="button">Copy</button>
+  <section class="radar" aria-labelledby="peer">
+    <div class="ripples" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="bubble" id="bubble">
+      <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="47"/>
+        <circle class="ring-fill" id="ringFill" cx="50" cy="50" r="47" pathLength="100"/>
+      </svg>
+      <div class="avatar" id="avatar" aria-hidden="true"></div>
+      <span class="device-badge" aria-hidden="true">
+        <svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="2"/><path d="M7 12.3h2"/></svg>
+      </span>
+      <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 12.5l4 4 8-9"/></svg></span>
     </div>
-    <ul id="downloads" class="list"></ul>
-    <p id="nothing" class="hint">Nothing shared yet. On Android, share to Airbox → “iPhone (browser)”.</p>
+    <p class="peer-name" id="peer">Connecting…</p>
+    <p class="peer-status" id="peerStatus"><span class="dot" id="dot"></span><span id="peerStatusText">Looking for your Android phone</span></p>
   </section>
 
-  <p class="foot">Works over your local Wi-Fi only. Nothing goes through the internet.</p>
+  <section class="compose" aria-label="Send text">
+    <label class="visually-hidden" for="text">Text to send</label>
+    <textarea id="text" rows="3" placeholder="Paste or type something to send" autocomplete="off" autocapitalize="sentences"></textarea>
+    <button id="sendText" class="send" type="button">Send</button>
+  </section>
+
+  <nav class="actions" aria-label="Send">
+    <button class="action" id="pasteHint" type="button">
+      <span class="action-icon" aria-hidden="true"><svg viewBox="0 0 28 28"><rect x="7" y="5.5" width="14" height="18" rx="3"/><path d="M11 5.5V4.8c0-.7.6-1.3 1.3-1.3h3.4c.7 0 1.3.6 1.3 1.3v.7M10.5 12h7M10.5 16h5"/></svg></span>
+      <span>Paste</span>
+    </button>
+    <label class="action" for="photos">
+      <span class="action-icon" aria-hidden="true"><svg viewBox="0 0 28 28"><rect x="4" y="6" width="20" height="16" rx="3.5"/><circle cx="10.5" cy="11.5" r="2"/><path d="M4.5 19.5l5.5-5 4 3.5 3.5-3 6 5"/></svg></span>
+      <span>Photos</span>
+    </label>
+    <input id="photos" type="file" accept="image/*,video/*" multiple hidden>
+    <label class="action" id="pickFiles" for="files">
+      <span class="action-icon" aria-hidden="true"><svg viewBox="0 0 28 28"><path d="M8 3.5h8l6 6V22a2.5 2.5 0 0 1-2.5 2.5h-11.5A2.5 2.5 0 0 1 5.5 22V6A2.5 2.5 0 0 1 8 3.5z"/><path d="M16 3.5V9.5h6"/></svg></span>
+      <span>Files</span>
+    </label>
+    <input id="files" type="file" multiple hidden>
+  </nav>
+
+  <ul id="uploads" class="list" aria-label="Sent"></ul>
+
+  <section class="inbox" aria-labelledby="inboxTitle">
+    <h2 id="inboxTitle">From your Android phone</h2>
+    <div class="group">
+      <div id="incomingTextBox" class="row text-row" hidden>
+        <pre id="incomingText"></pre>
+        <button id="copy" class="pill" type="button">Copy</button>
+      </div>
+      <ul id="downloads" class="list"></ul>
+      <p id="nothing" class="empty">Share something to Airbox on Android and choose this iPhone. It appears here.</p>
+    </div>
+  </section>
+
+  <p class="foot">Sent straight over your Wi-Fi. Nothing goes through the internet.</p>
 </main>
-<div id="toast" role="status" aria-live="polite"></div>
 <script src="/app.js"></script>
 </body>
 </html>

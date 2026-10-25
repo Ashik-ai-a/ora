@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var uploads: [Upload] = []
     /// Drives the dot ring around the Dynamic Island while the app is open.
     @Published var halo: HaloState?
+    @Published var justCopied = false
     private var haloHide: Task<Void, Never>?
 
     struct Upload: Identifiable { let id = UUID(); let name: String; var progress: Double; var done = false; var failed = false }
@@ -124,6 +125,8 @@ final class AppModel: ObservableObject {
         guard let text = incomingText?.text else { return }
         UIPasteboard.general.string = text
         status = "Copied."
+        justCopied = true
+        Task { try? await Task.sleep(for: .seconds(1.6)); justCopied = false }
         Task { await island.end(id: "clipboard") }
     }
 

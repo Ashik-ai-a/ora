@@ -18,6 +18,9 @@ before assuming anything works on a phone.
 | `docs/COMPANION.md` | Linked-devices features (notifications, calls, replies, media, clipboard, find device): what's possible between Android and iPhone and what isn't. |
 | `docs/NO_APP_IPHONE.md` | iPhone with **no app**: AirDrop → Quick Share, the Safari page, and Shortcuts/Back Tap for clipboard. |
 | `docs/DYNAMIC_ISLAND.md` | Optional iPhone app: one-tap Paste & Send, and what goes on the Dynamic Island (and Android 16 Live Updates). |
+| `android/` | Android app (Compose UI, foreground service, share sheet, works on Android 7+ and every major brand). System layer type-checked against Android 16; UI not yet compiled. See `android/README.md`. |
+| `docs/DESIGN.md` | The AirDrop-style design system used on all three surfaces. |
+| `design/icon/` | App icon set (iOS, Android adaptive, macOS, Windows, Linux, web). |
 | `ios/` | iPhone app source (SwiftUI + Live Activities). Written but **not yet compiled**; see `ios/README.md`. |
 | `docs/PROTOCOL.md` | Wire spec both apps implement. |
 | `docs/SECURITY.md` | Threat model and known gaps. |
@@ -28,7 +31,7 @@ before assuming anything works on a phone.
 Requires JDK 17+ and Gradle 8.x.
 
 ```sh
-gradle test                 # 75 unit + end-to-end tests
+gradle test                 # 75 unit + end-to-end tests + Android API type-check
 gradle :cli:installDist     # builds cli/build/install/airbox/bin/airbox
 ```
 
