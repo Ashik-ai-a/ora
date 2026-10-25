@@ -75,7 +75,7 @@ class WebBridge(
     private val failures = ConcurrentHashMap<String, MutableList<Long>>()
 
     @Serializable data class SharedText(val text: String, val updatedAtEpochMs: Long)
-    @Serializable data class SharedFileInfo(val id: String, val name: String, val size: Long, val mimeType: String)
+    @Serializable data class SharedFileInfo(val id: String, val name: String, val size: Long, val mimeType: String, val sharedAtEpochMs: Long = 0)
     private class Shared(val info: SharedFileInfo, val file: OutgoingFile)
 
     @Volatile private var sharedText: SharedText? = null
@@ -237,7 +237,7 @@ class WebBridge(
 
     fun shareFile(file: OutgoingFile): String {
         val id = randomBytes(9).toBase64Url()
-        val info = SharedFileInfo(id, file.name, file.size, file.mimeType)
+        val info = SharedFileInfo(id, file.name, file.size, file.mimeType, clock())
         sharedFiles[id] = Shared(info, file)
         publish("file", json.encodeToJsonElement(SharedFileInfo.serializer(), info))
         return id
@@ -296,7 +296,7 @@ class WebBridge(
             return if (req.path == "/") page("signed-out.html") else HttpResponse.text(401, "Scan the QR code on the Android phone again.")
         }
 
-        if (req.method == "POST") {
+        if (req.method == "POST" || req.method == "DELETE") {
             // CSRF: a custom header forces a CORS preflight, which we never approve.
             // Shortcuts uses the Bearer key instead of a cookie, so it isn't exposed to CSRF.
             if (req.header("x-airbox") != "1" && req.header("authorization") == null) throw HttpError(403, "Missing header")
@@ -315,8 +315,14 @@ class WebBridge(
             req.method == "GET" && req.path.startsWith("/api/transfers/") -> transferStatus(req.path.removePrefix("/api/transfers/"))
             req.method == "GET" && req.path == "/api/text" -> HttpResponse.json(json.encodeToString(sharedText))
             req.method == "POST" && req.path == "/api/upload" -> receiveFile(req, device)
-            req.method == "GET" && req.path == "/api/files" -> HttpResponse.json(json.encodeToString(sharedFiles.values.map { it.info }))
+            req.method == "GET" && req.path == "/api/files" -> HttpResponse.json(json.encodeToString(sharedFiles.values.map { it.info }.sortedByDescending { it.sharedAtEpochMs }))
             req.method == "GET" && req.path.startsWith("/api/files/") -> download(req.path.removePrefix("/api/files/"))
+            // Swipe-to-delete on the iPhone: stop offering an item (the file stays on Android).
+            req.method == "DELETE" && req.path.startsWith("/api/files/") -> {
+                if (sharedFiles.remove(req.path.removePrefix("/api/files/")) == null) HttpResponse.text(404, "Not found")
+                else HttpResponse.empty()
+            }
+            req.method == "DELETE" && req.path == "/api/text" -> { sharedText = null; HttpResponse.empty() }
             req.method == "GET" && req.path == "/api/events" -> {
                 val after = req.query["after"]?.toLongOrNull() ?: 0
                 val wait = (req.query["wait"]?.toLongOrNull() ?: 25).coerceIn(0, 25) * 1000

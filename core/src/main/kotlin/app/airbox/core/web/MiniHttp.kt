@@ -76,7 +76,8 @@ internal object MiniHttp {
         }
         if (headers["transfer-encoding"] != null) throw HttpError(411, "Length required")
         val length = headers["content-length"]?.toLongOrNull()?.takeIf { it >= 0 }
-            ?: if (parts[0] == "GET" || parts[0] == "HEAD") 0L else throw HttpError(411, "Length required")
+            // Bodyless methods may omit Content-Length (Safari does for DELETE).
+            ?: if (parts[0] in setOf("GET", "HEAD", "DELETE", "OPTIONS")) 0L else throw HttpError(411, "Length required")
         val target = parts[1]
         val path = target.substringBefore('?')
         val query = target.substringAfter('?', "").split('&').filter { '=' in it }.associate {
