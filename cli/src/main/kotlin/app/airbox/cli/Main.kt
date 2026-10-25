@@ -43,6 +43,10 @@ private const val USAGE = """Airbox desktop reference client
   airbox send --to HOST:PORT FILE...
       Send by address. You'll confirm a 6-digit code shown on both devices.
 
+  airbox web [--dir DIR] [--port PORT] [--share-text TEXT] [--share-file FILE]
+      Let an iPhone with no app use Airbox from Safari: scan the QR code with the
+      iPhone camera. Also prints a key for an iOS Shortcut (clipboard via Back Tap).
+
   airbox trusted            List remembered devices.
   airbox forget FINGERPRINT Remove a remembered device."""
 
@@ -52,6 +56,7 @@ fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "receive" -> receive(identity, trust, args.drop(1))
         "send" -> send(identity, args.drop(1))
+        "web" -> web(args.drop(1))
         "trusted" -> trust.all().forEach { println("${it.fingerprint}  ${it.name}") }
         "forget" -> trust.revoke(args.getOrNull(1) ?: usage())
         else -> usage()
@@ -169,4 +174,41 @@ private fun send(identity: DeviceIdentity, args: List<String>) {
         println("Transfer ${outcome.state.name.lowercase()}: ${outcome.error?.userMessage ?: ""}")
         exitProcess(1)
     }
+}
+
+private fun printQr(text: String) {
+    val matrix = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, 0, 0,
+        mapOf(com.google.zxing.EncodeHintType.MARGIN to 2))
+    // Two QR rows per terminal line using half blocks; dark modules drawn as spaces on a light background.
+    for (y in 0 until matrix.height step 2) {
+        val line = StringBuilder()
+        for (x in 0 until matrix.width) {
+            val top = matrix.get(x, y)
+            val bottom = y + 1 < matrix.height && matrix.get(x, y + 1)
+            line.append(when { top && bottom -> ' '; top -> '\u2584'; bottom -> '\u2580'; else -> '\u2588' })
+        }
+        println(line)
+    }
+}
+
+private fun web(args: List<String>) {
+    val dir = Paths.get(option(args, "--dir") ?: Paths.get(System.getProperty("user.home"), "Downloads", "Airbox").toString())
+    Files.createDirectories(dir)
+    val bridge = app.airbox.core.web.WebBridge(
+        DirectoryReceiveStorage(dir), deviceName,
+        onText = { text -> println("\n[text from iPhone]\n$text\n") },
+        onFile = { _, saved -> println("[file from iPhone] saved as $saved in $dir") },
+        port = option(args, "--port")?.toInt() ?: 0,
+    ).start()
+    option(args, "--share-text")?.let { bridge.shareText(it) }
+    option(args, "--share-file")?.let { bridge.shareFile(PathOutgoingFile(Paths.get(it))) }
+    val url = bridge.pairingUrl(lanAddress())
+    println("Point the iPhone camera at this code (same Wi-Fi; single use, 10 minutes):\n")
+    printQr(url)
+    println("\n  $url\n")
+    val key = bridge.createShortcutKey("iPhone Shortcut")
+    println("iOS Shortcut (optional): POST the clipboard to http://${lanAddress()}:${bridge.port}/api/text")
+    println("  with header  Authorization: Bearer $key\n")
+    println("Waiting... (Ctrl+C to stop)")
+    Thread.currentThread().join()
 }

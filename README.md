@@ -16,6 +16,7 @@ before assuming anything works on a phone.
 | `cli/` | Desktop reference client for interop testing and for the future Swift port. |
 | `docs/FEASIBILITY.md` | Platform reality check, compatibility matrix, architecture decision. **Start here.** |
 | `docs/COMPANION.md` | Linked-devices features (notifications, calls, replies, media, clipboard, find device): what's possible between Android and iPhone and what isn't. |
+| `docs/NO_APP_IPHONE.md` | iPhone with **no app**: AirDrop → Quick Share, the Safari page, and Shortcuts/Back Tap for clipboard. |
 | `docs/PROTOCOL.md` | Wire spec both apps implement. |
 | `docs/SECURITY.md` | Threat model and known gaps. |
 | `docs/STATUS.md` | What works, what's tested, what isn't built, device test plan. |
@@ -25,7 +26,7 @@ before assuming anything works on a phone.
 Requires JDK 17+ and Gradle 8.x.
 
 ```sh
-gradle test                 # 53 unit + end-to-end tests over real TLS
+gradle test                 # 63 unit + end-to-end tests
 gradle :cli:installDist     # builds cli/build/install/airbox/bin/airbox
 ```
 
@@ -40,4 +41,11 @@ airbox receive --dir ~/Downloads/Airbox
 airbox send --link 'airbox://pair?...' photo.heic video.mov
 # or, without the link (both sides confirm a 6-digit code):
 airbox send --to 192.168.1.20:40123 report.pdf
+```
+
+## Try the no-app iPhone page
+
+```sh
+airbox web --share-text "hello from the computer"
+# scan the printed QR code with the iPhone camera (same Wi-Fi)
 ```

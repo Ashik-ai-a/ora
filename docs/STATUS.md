@@ -29,9 +29,11 @@ JVM over loopback TLS. **Nothing has been tested on a physical phone yet.**
 | AMS codec (iPhone media control) | `AmsCodecTest` |
 | Companion link between paired devices: notifications, reply text, clipboard, battery; feature negotiation; strangers refused; keepalives; transfers alongside | `CompanionLinkTest` |
 | Notification privacy policy (opt-in, hidden content, OTP masking) | `NotificationPolicyTest` |
+| No-app iPhone web bridge: QR sign-in, text and file upload, Android→iPhone text/files, Shortcut keys, CSRF / DNS-rebinding / lockout protection | `WebBridgeTest` (10 tests) |
+| The same page driven in Chromium with iPhone 15 emulation: send text, upload a 3 MB photo, download, copy | Manual Playwright run, files byte-identical. **Not yet run in real iOS Safari.** |
 | Desktop CLI sender/receiver works end to end | Manual: 20 MB + text file over TLS, byte-identical (`cmp`) |
 
-Run them: `gradle test` (53 tests).
+Run them: `gradle test` (63 tests).
 
 ## Not built yet (and why)
 

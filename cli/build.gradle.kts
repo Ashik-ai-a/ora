@@ -9,6 +9,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    implementation("com.google.zxing:core:3.5.3")
 }
 
 application {

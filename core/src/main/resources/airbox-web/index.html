@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Airbox</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Airbox</h1>
+    <p class="peer"><span class="dot" id="dot"></span><span id="peer">Connecting…</span></p>
+  </header>
+
+  <section class="card">
+    <h2>Send text</h2>
+    <label for="text" class="hint">Touch and hold in the box, then tap <b>Paste</b>.</label>
+    <textarea id="text" rows="4" placeholder="Paste or type here" autocomplete="off" autocapitalize="sentences"></textarea>
+    <button id="sendText" class="primary" type="button">Send to Android</button>
+  </section>
+
+  <section class="card">
+    <h2>Send photos &amp; files</h2>
+    <label class="button primary" for="files">Choose photos or files</label>
+    <input id="files" type="file" multiple hidden>
+    <ul id="uploads" class="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>From Android</h2>
+    <div id="incomingTextBox" hidden>
+      <pre id="incomingText"></pre>
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <ul id="downloads" class="list"></ul>
+    <p id="nothing" class="hint">Nothing shared yet. On Android, share to Airbox → “iPhone (browser)”.</p>
+  </section>
+
+  <p class="foot">Works over your local Wi-Fi only. Nothing goes through the internet.</p>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>
