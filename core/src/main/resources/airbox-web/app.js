@@ -4,6 +4,97 @@
   const radar = document.querySelector(".radar");
   const human = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(0) + " KB"
     : n < 1073741824 ? (n / 1048576).toFixed(1) + " MB" : (n / 1073741824).toFixed(2) + " GB";
+  // "Today 14:32", "Yesterday 09:10", "Mon 18:05", "12 Oct, 09:10" in the iPhone's own locale and clock style.
+  function whenLabel(ms) {
+    const d = new Date(ms), now = new Date();
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(now) - day(d)) / 86400000);
+    if (diff === 0) return "Today " + time;
+    if (diff === 1) return "Yesterday " + time;
+    if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: "short" }) + " " + time;
+    const opts = { day: "numeric", month: "short" };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+    return d.toLocaleDateString([], opts) + ", " + time;
+  }
+  function nameBlock(name, when) {
+    const wrap = document.createElement("div"); wrap.className = "name-wrap";
+    const n = document.createElement("span"); n.className = "name"; n.textContent = name;
+    const w = document.createElement("span"); w.className = "when"; w.textContent = when;
+    wrap.append(n, w);
+    return wrap;
+  }
+
+  // iOS-style swipe to delete: drag a row left to reveal a red Delete button; let go past
+  // half of it to keep it open, or swipe most of the way to delete at once. Tap elsewhere
+  // (or swipe back) to close.
+  const REVEAL = 88;
+  let openRow = null;
+  function swipeable(row, onDelete, keep) {
+    row.classList.add("swipe");
+    const inner = document.createElement("div");
+    inner.className = "swipe-inner";
+    while (row.firstChild) inner.appendChild(row.firstChild);
+    // A drag that starts on a link or image must swipe the row, not start a link drag.
+    inner.querySelectorAll("a, img").forEach((el) => el.setAttribute("draggable", "false"));
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "swipe-del";
+    del.textContent = "Delete";
+    del.tabIndex = -1;
+    row.append(del, inner);
+    let startX = 0, startY = 0, base = 0, x = 0, dragging = false, decided = false;
+    const set = (v, animate) => {
+      x = v;
+      inner.style.transition = animate ? "transform .3s cubic-bezier(.25,.9,.3,1)" : "none";
+      inner.style.transform = `translateX(${v}px)`;
+      del.tabIndex = v < 0 ? 0 : -1;
+    };
+    const close = () => { set(0, true); if (openRow === close) openRow = null; };
+    const remove = () => {
+      row.style.transition = "opacity .2s, max-height .25s ease .1s";
+      row.style.maxHeight = row.offsetHeight + "px";
+      requestAnimationFrame(() => { row.style.opacity = "0"; row.style.maxHeight = "0"; });
+      setTimeout(() => {
+        if (!keep) { row.remove(); return; }
+        // Reused element (the text card): hide it and reset for the next time it's shown.
+        row.hidden = true;
+        row.style.transition = ""; row.style.opacity = ""; row.style.maxHeight = "";
+        set(0, false);
+      }, 380);
+      onDelete();
+    };
+    inner.addEventListener("pointerdown", (e) => {
+      if (openRow && openRow !== close) openRow();
+      startX = e.clientX; startY = e.clientY; base = x; dragging = true; decided = false;
+    });
+    inner.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!decided) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        decided = true;
+        if (Math.abs(dy) > Math.abs(dx)) { dragging = false; return; } // a scroll, not a swipe
+        inner.setPointerCapture(e.pointerId);
+      }
+      set(Math.min(0, Math.max(-row.offsetWidth, base + dx)), false);
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      if (x < -row.offsetWidth * 0.6) { set(-row.offsetWidth, true); remove(); }
+      else if (x < -REVEAL / 2) { set(-REVEAL, true); openRow = close; }
+      else close();
+    };
+    inner.addEventListener("pointerup", end);
+    inner.addEventListener("pointercancel", end);
+    del.addEventListener("click", () => { set(-row.offsetWidth, true); remove(); });
+    return close;
+  }
+  document.addEventListener("pointerdown", (e) => {
+    if (openRow && !e.target.closest(".swipe")) openRow();
+  });
+
   const api = (path, opts = {}) => fetch(path, Object.assign({ credentials: "same-origin" }, opts, {
     headers: Object.assign({ "X-Airbox": "1" }, opts.headers || {}),
   }));
@@ -194,10 +285,11 @@
     return new Promise((resolve) => {
       const li = document.createElement("li");
       const progress = miniRing();
-      const name = document.createElement("span"); name.className = "name"; name.textContent = file.name;
       const meta = document.createElement("span"); meta.className = "meta"; meta.textContent = human(file.size);
-      li.append(progress, name, meta);
+      li.append(progress, nameBlock(file.name, "Sent · " + whenLabel(Date.now())), meta);
       $("uploads").prepend(li);
+      // Removes the row from this list; the copy on Android is managed there.
+      swipeable(li, () => {});
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
       xhr.setRequestHeader("X-Airbox", "1");
@@ -294,6 +386,9 @@
 
   // ---- Poll for things Android shares ----
   let lastText = 0, lastFiles = "";
+  swipeable($("incomingTextBox"), () => {
+    api("/api/text", { method: "DELETE" }).catch(() => toast("Couldn’t reach " + peerName, true));
+  }, true);
   async function poll() {
     try {
       const [t, f] = await Promise.all([api("/api/text"), api("/api/files")]);
@@ -305,6 +400,7 @@
         if (lastText !== 0) toast("New text from " + peerName);
         lastText = text.updatedAtEpochMs;
         $("incomingText").textContent = text.text;
+        $("incomingWhen").textContent = whenLabel(text.updatedAtEpochMs);
         $("incomingTextBox").hidden = false;
       }
       const key = JSON.stringify(files);
@@ -312,14 +408,20 @@
         lastFiles = key;
         const ul = $("downloads");
         ul.textContent = "";
-        for (const file of files) {
+        // Newest first.
+        for (const file of files.slice().sort((a, b) => (b.sharedAtEpochMs || 0) - (a.sharedAtEpochMs || 0))) {
           const li = document.createElement("li");
-          const name = document.createElement("span"); name.className = "name"; name.textContent = file.name;
+          const name = nameBlock(file.name, file.sharedAtEpochMs ? whenLabel(file.sharedAtEpochMs) : "");
           const meta = document.createElement("span"); meta.className = "meta"; meta.textContent = human(file.size);
           const a = document.createElement("a"); a.href = "/api/files/" + encodeURIComponent(file.id); a.textContent = "Save";
           a.setAttribute("download", file.name);
           li.append(name, meta, a);
           ul.append(li);
+          swipeable(li, () => {
+            api("/api/files/" + encodeURIComponent(file.id), { method: "DELETE" })
+              .then(() => { lastFiles = ""; })
+              .catch(() => toast("Couldn’t reach " + peerName, true));
+          });
         }
       }
       $("nothing").hidden = !!text || files.length > 0;

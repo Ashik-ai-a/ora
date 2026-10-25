@@ -126,6 +126,22 @@ class WebBridgeTest {
         assertEquals(507, post("/api/upload?name=a.mov", ByteArray(10_000), cookie).statusCode())
     }
 
+    @Test fun iphoneCanSwipeAwayWhatAndroidShared() {
+        val cookie = scanQr()
+        val src = tmp.resolve("note.txt").also { Files.writeString(it, "hello") }
+        val id = bridge.shareFile(PathOutgoingFile(src))
+        bridge.shareText("temp")
+        fun delete(path: String, csrf: Boolean = true) = http.send(HttpRequest.newBuilder(URI("$base$path")).header("Cookie", cookie)
+            .apply { if (csrf) header("X-Airbox", "1") }.DELETE().build(), HttpResponse.BodyHandlers.ofString()).statusCode()
+        assertEquals(403, delete("/api/files/$id", csrf = false), "cross-site delete is refused")
+        assertEquals(204, delete("/api/files/$id"))
+        assertEquals("[]", String(get("/api/files", cookie).body()))
+        assertTrue(Files.exists(src), "the file itself stays on Android")
+        assertEquals(204, delete("/api/text"))
+        assertEquals("null", String(get("/api/text", cookie).body()))
+        assertEquals(404, delete("/api/files/nope"))
+    }
+
     @Test fun androidSharesTextAndFilesToIphone() {
         val cookie = scanQr()
         assertEquals("null", String(get("/api/text", cookie).body()))

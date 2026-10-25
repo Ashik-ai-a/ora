@@ -115,7 +115,23 @@ button, label.action { font: inherit; color: inherit; }
 #uploads:not(:empty) { background: var(--surface); border-radius: 14px; margin: 10px 0 0; padding: 0 16px; }
 .list li { display: flex; align-items: center; gap: 12px; min-height: 52px; border-bottom: 0.5px solid var(--separator); }
 .list li:last-child { border-bottom: 0; }
-.list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Swipe to delete (iOS-style): the row slides over a red Delete button. */
+.swipe { position: relative; overflow: hidden; padding: 0 !important; }
+.swipe-inner { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; width: 100%; min-height: inherit;
+  background: var(--surface); touch-action: pan-y; will-change: transform; }
+.list li.swipe .swipe-inner { min-height: 52px; }
+.text-row.swipe .swipe-inner { align-items: flex-start; padding: 14px 0; }
+.swipe-inner a, .swipe-inner img { -webkit-user-drag: none; user-select: none; }
+.swipe-del { position: absolute; top: 0; right: 0; bottom: 0; width: 88px; border: 0; background: var(--red); color: #fff;
+  font: inherit; font-weight: 600; cursor: pointer; }
+.group .list li.swipe, .group .text-row.swipe { margin: 0 -16px; }
+.group .swipe .swipe-inner { padding-left: 16px; padding-right: 16px; }
+#uploads li.swipe { margin: 0 -16px; }
+#uploads .swipe .swipe-inner { padding-left: 16px; padding-right: 16px; }
+.list .name-wrap { flex: 1; min-width: 0; display: grid; padding: 8px 0; }
+.list .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { color: var(--label-2); font-size: 0.8125rem; line-height: 1.3; letter-spacing: -0.006em; font-variant-numeric: tabular-nums; }
+.text-wrap { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .list .meta { color: var(--label-2); font-size: 0.9375rem; white-space: nowrap; font-family: var(--font-rounded); font-variant-numeric: tabular-nums; }
 .list .meta.ok { color: var(--green); font-weight: 600; }
 .list .meta.bad { color: var(--red); }
@@ -129,7 +145,7 @@ button, label.action { font: inherit; color: inherit; }
 .group { background: var(--surface); border-radius: 14px; padding: 0 16px; }
 .group > .list { padding: 0; }
 .row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 0.5px solid var(--separator); }
-.text-row pre { flex: 1; margin: 0; font: inherit; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+.text-row pre { margin: 0; font: inherit; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
 .pill { border: 0; background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); font-weight: 600; font-size: 0.9375rem;
   border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 .empty { margin: 0; padding: 16px 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.4; }

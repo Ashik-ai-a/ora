@@ -55,6 +55,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.airbox.android.platform.AirboxService
 import app.airbox.android.platform.AirboxState
@@ -63,6 +67,7 @@ import app.airbox.android.platform.Clipboard
 import app.airbox.android.platform.DeviceCompat
 import app.airbox.android.platform.Qr
 import app.airbox.android.platform.RecentTransfer
+import app.airbox.android.platform.TimeLabel
 import app.airbox.android.platform.UriOutgoingFile
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,6 +77,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AirboxService.start(this)
+        TimeLabel.is24h = android.text.format.DateFormat.is24HourFormat(this)
         setContent { AirboxTheme { Home() } }
     }
 }
@@ -249,23 +255,161 @@ private fun ConnectCard(state: AirboxUiState, onNewCode: () -> Unit, onHotspot: 
     }
 }
 
+private enum class RecentFilter(val label: String) { ALL("All"), RECEIVED("Received"), SENT("Sent") }
+
+/** Newest first, filterable, with when each item moved in small text under its name. */
 @Composable
 private fun RecentList(items: List<RecentTransfer>) {
     val c = LocalAirboxColors.current
+    val context = LocalContext.current
+    var filter by remember { mutableStateOf(RecentFilter.ALL) }
+    var showAll by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<RecentTransfer?>(null) }
+    val shown = items
+        .filter { when (filter) { RecentFilter.ALL -> true; RecentFilter.RECEIVED -> it.incoming; RecentFilter.SENT -> !it.incoming } }
+        .sortedByDescending { it.atEpochMs }
     Column {
         Text("Recent", style = AirboxType.title3, color = c.label, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface).padding(horizontal = 16.dp)) {
-            items.take(8).forEachIndexed { i, item ->
-                Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                    MiniRing(1f, c.green)
-                    Text(item.name, style = AirboxType.body, color = c.label, maxLines = 1, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
-                    Text(if (item.incoming) "Received" else "Shared", style = AirboxType.subhead, color = c.label2)
+        // iOS-style segmented control
+        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(9.dp)).background(c.surface2).padding(2.dp)) {
+            RecentFilter.entries.forEach { f ->
+                val selected = f == filter
+                Box(Modifier.weight(1f).height(30.dp).clip(RoundedCornerShape(7.dp))
+                    .background(if (selected) c.surface else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { filter = f; showAll = false }, contentAlignment = Alignment.Center) {
+                    Text(f.label, style = AirboxType.subhead.copy(fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.SemiBold else null),
+                        color = c.label)
                 }
-                if (i < minOf(items.size, 8) - 1) HorizontalDivider(color = c.separator)
+            }
+        }
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface)) {
+            if (shown.isEmpty()) {
+                Text(if (filter == RecentFilter.SENT) "Nothing sent yet" else "Nothing received yet",
+                    style = AirboxType.subhead, color = c.label2, modifier = Modifier.padding(16.dp))
+            }
+            val visible = if (showAll) shown else shown.take(10)
+            visible.forEachIndexed { i, item ->
+                // key: a deleted row's swipe offset must not carry over to the row that moves up.
+                androidx.compose.runtime.key(item.key) {
+                    SwipeToDeleteRow(onDelete = {
+                        if (item.canDeleteFile) confirm = item else AirboxState.removeRecent(item)
+                    }) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            MiniRing(1f, if (item.incoming) c.green else c.blue)
+                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                Text(item.name, style = AirboxType.body, color = c.label, maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                Text("${if (item.incoming) "Received" else "Sent"} · ${TimeLabel.of(item.atEpochMs)} · ${sizeLabel(item.sizeBytes)}",
+                                    style = AirboxType.footnote, color = c.label2, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+                if (i < visible.size - 1) HorizontalDivider(color = c.separator, modifier = Modifier.padding(start = 50.dp))
+            }
+        }
+        if (!showAll && shown.size > 10) {
+            Text("Show all ${shown.size}", style = AirboxType.subhead, color = c.blue,
+                modifier = Modifier.padding(start = 4.dp, top = 10.dp).clickable { showAll = true })
+        }
+        if (shown.isNotEmpty()) {
+            Text("Swipe left on an item to delete it.", style = AirboxType.footnote, color = c.label2,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+        }
+    }
+
+    confirm?.let { item ->
+        DeleteSheet(
+            item,
+            onDeleteFile = {
+                if (!AirboxState.deleteRecent(context, item)) {
+                    android.widget.Toast.makeText(context, "Couldn’t delete it here. Delete it in Photos or Files instead.",
+                        android.widget.Toast.LENGTH_LONG).show()
+                }
+                confirm = null
+            },
+            onRemoveFromList = { AirboxState.removeRecent(item); confirm = null },
+            onCancel = { confirm = null },
+        )
+    }
+}
+
+/**
+ * iOS-style swipe: drag left to reveal a red Delete button; let go past half of it to keep
+ * it open, or swipe all the way to delete straight away. Tapping elsewhere closes it.
+ */
+@Composable
+private fun SwipeToDeleteRow(onDelete: () -> Unit, content: @Composable () -> Unit) {
+    val c = LocalAirboxColors.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val revealPx = with(density) { 88.dp.toPx() }
+    var offset by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var width by remember { androidx.compose.runtime.mutableIntStateOf(1) }
+    val scope = rememberCoroutineScope()
+    fun settle(target: Float) = scope.launch {
+        androidx.compose.animation.core.animate(offset, target,
+            animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.85f, stiffness = 500f)) { v, _ -> offset = v }
+    }
+    Box(Modifier.fillMaxWidth().onSizeChanged { width = it.width }) {
+        Box(
+            Modifier.matchParentSize().background(c.red)
+                .clickable(enabled = offset < -1f) { settle(0f); onDelete() },
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Text("Delete", style = AirboxType.headline, color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.padding(end = 20.dp))
+        }
+        Box(
+            Modifier.offset { androidx.compose.ui.unit.IntOffset(offset.toInt(), 0) }
+                .background(c.surface)
+                .draggable(
+                    state = androidx.compose.foundation.gestures.rememberDraggableState { delta ->
+                        offset = (offset + delta).coerceIn(-width.toFloat(), 0f)
+                    },
+                    orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
+                    onDragStopped = { velocity ->
+                        when {
+                            offset < -width * 0.6f -> { settle(0f); onDelete() }
+                            offset < -revealPx / 2 || velocity < -1200f -> settle(-revealPx)
+                            else -> settle(0f)
+                        }
+                    },
+                ),
+        ) { content() }
+    }
+}
+
+/** iOS-style action sheet: delete the file too, or only tidy the list. */
+@Composable
+private fun DeleteSheet(item: RecentTransfer, onDeleteFile: () -> Unit, onRemoveFromList: () -> Unit, onCancel: () -> Unit) {
+    val c = LocalAirboxColors.current
+    androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
+        Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface)) {
+                Text("Delete “${item.name}”?", style = AirboxType.footnote.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                    color = c.label2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 14.dp, start = 16.dp, end = 16.dp))
+                Text("It will also be removed from Photos or Downloads on this phone.", style = AirboxType.footnote, color = c.label2,
+                    textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 14.dp))
+                HorizontalDivider(color = c.separator)
+                SheetButton("Delete", c.red, onDeleteFile)
+                HorizontalDivider(color = c.separator)
+                SheetButton("Remove from list only", c.blue, onRemoveFromList)
+            }
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface)) {
+                SheetButton("Cancel", c.blue, onCancel, bold = true)
             }
         }
     }
 }
+
+@Composable
+private fun SheetButton(label: String, color: androidx.compose.ui.graphics.Color, onClick: () -> Unit, bold: Boolean = false) {
+    Box(Modifier.fillMaxWidth().height(56.dp).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Text(label, style = if (bold) AirboxType.headline else AirboxType.body.copy(fontSize = 20.sp), color = color)
+    }
+}
+
 
 /** One honest row per thing that can stop Airbox receiving in the background on this phone. */
 @Composable
