@@ -25,9 +25,13 @@ JVM over loopback TLS. **Nothing has been tested on a physical phone yet.**
 | Malformed offer rejected before the user is asked | `unknownOfferEntriesAreValidated` |
 | Transfer state machine (COMPLETED only after VERIFYING) | `StateMachineTest` |
 | Transport selection incl. Bluetooth off, all radios off, permission denied | `ConnectionPlannerTest` |
+| ANCS client codec + bridge (iPhone notifications, calls, answer/decline) against a simulated iPhone | `AncsCodecTest`, `AncsBridgeTest` |
+| AMS codec (iPhone media control) | `AmsCodecTest` |
+| Companion link between paired devices: notifications, reply text, clipboard, battery; feature negotiation; strangers refused; keepalives; transfers alongside | `CompanionLinkTest` |
+| Notification privacy policy (opt-in, hidden content, OTP masking) | `NotificationPolicyTest` |
 | Desktop CLI sender/receiver works end to end | Manual: 20 MB + text file over TLS, byte-identical (`cmp`) |
 
-Run them: `gradle test` (39 tests).
+Run them: `gradle test` (53 tests).
 
 ## Not built yet (and why)
 
@@ -42,6 +46,7 @@ Run them: `gradle test` (39 tests).
 | Adaptive chunk size / concurrency | The chunk size is negotiated; nothing adapts yet. It needs device benchmarks first. |
 | Performance benchmarks | **None on devices.** Loopback CLI throughput (~35 MB/s on a shared cloud VM, TLS + SHA-256 on both ends) means nothing for phones. Don't quote it. |
 | History screen, settings, onboarding, localisation | Not built. |
+| BLE radio code for the link (ANCS/AMS GATT client, L2CAP), notification listener, iOS background BLE | Not built: needs the Android SDK / Xcode and real phones. The byte-level and protocol parts are done and tested. See `docs/COMPANION.md`. |
 
 ## Limits no app can remove
 

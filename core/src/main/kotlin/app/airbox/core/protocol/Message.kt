@@ -11,6 +11,9 @@ const val PROTOCOL_VERSION = 1
 
 enum class Platform { ANDROID, IOS, DESKTOP }
 
+/** Why a connection was opened. Older peers omit it, which means TRANSFER. */
+enum class Purpose { TRANSFER, LINK }
+
 /**
  * Control messages. JSON with a "type" discriminator so the iOS side can decode them with
  * plain Codable. Unknown fields are ignored so newer minor revisions stay compatible.
@@ -27,6 +30,7 @@ data class Hello(
     val deviceName: String,
     val platform: Platform,
     val maxChunkBytes: Int = FrameLimits.DEFAULT_CHUNK_BYTES,
+    val purpose: Purpose = Purpose.TRANSFER,
 ) : Message
 
 /** Receiver -> sender after HELLO: whether the sender's certificate is already trusted. */

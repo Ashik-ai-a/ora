@@ -18,7 +18,8 @@ class ReceiverServer(
     private val transport: TlsTransport,
     port: Int,
     private val handler: (MessageChannel) -> Unit,
-    private val maxConcurrent: Int = 1,
+    /** Transfers are limited to one at a time by [IncomingRouter]; links are long-lived. */
+    private val maxConcurrent: Int = 4,
     private val maxConnectionsPerMinutePerAddress: Int = 10,
     private val clock: () -> Long = System::currentTimeMillis,
     bindAddress: String? = null,

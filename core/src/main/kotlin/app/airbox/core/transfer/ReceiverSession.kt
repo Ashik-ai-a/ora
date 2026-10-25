@@ -78,6 +78,8 @@ class ReceiverSession(
     private val policy: ReceivePolicy = ReceivePolicy(),
     private val control: TransferControl = TransferControl(),
     private val progress: ProgressListener? = null,
+    /** Set when a router already read the peer's hello to decide what kind of session this is. */
+    private val peerHello: Hello? = null,
 ) {
     val stateMachine = TransferStateMachine(TransferState.CONNECTING)
     private val peerFp = channel.stream.peerFingerprint
@@ -87,7 +89,7 @@ class ReceiverSession(
 
     fun run(): ReceiveOutcome {
         try {
-            val peer = channel.expect<Hello>()
+            val peer = peerHello ?: channel.expect<Hello>()
             if (peer.protocolVersion != PROTOCOL_VERSION) {
                 channel.send(Cancel(ErrorCode.PROTOCOL_VERSION_UNSUPPORTED))
                 throw AirboxException(ErrorCode.PROTOCOL_VERSION_UNSUPPORTED)
