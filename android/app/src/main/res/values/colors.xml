@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="airbox_bg">#F2F2F7</color>
+    <color name="icon_top">#64D2FF</color>
+    <color name="icon_bottom">#0A84FF</color>
+</resources>

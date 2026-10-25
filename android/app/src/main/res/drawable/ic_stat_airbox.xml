@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: white silhouette of the app icon motif (Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="256" android:viewportHeight="256">
+    <path android:pathData="M94.1,106.1 A48,48 0 0,1 161.9,106.1" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="20" android:strokeLineCap="round" android:fillColor="#00000000" />
+    <path android:pathData="M60.6,80.6 A94,94 0 0,1 195.4,80.6" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="20" android:strokeLineCap="round" android:fillColor="#00000000" />
+    <path android:pathData="M106,132h44a16,16 0 0,1 16,16v38a16,16 0 0,1 -16,16h-44a16,16 0 0,1 -16,-16v-38a16,16 0 0,1 16,-16z"
+        android:fillColor="#FFFFFFFF" />
+</vector>
