@@ -1,0 +1,74 @@
+name: Android APK
+
+# Builds the Android app on every push and publishes the APK as a GitHub Release:
+#   - main          -> "Airbox <version> (build N)", marked Latest
+#   - other branches -> a pre-release "Airbox preview (build N)" for testing
+on:
+  push:
+    paths:
+      - "android/**"
+      - "core/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Build debug APK
+        run: gradle -p android :app:assembleDebug --stacktrace
+
+      - name: Name the APK
+        id: apk
+        run: |
+          version=$(grep -oP 'versionName = "\K[^"]+' android/app/build.gradle.kts)
+          name="Airbox-${version}-build${GITHUB_RUN_NUMBER}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$name"
+          echo "file=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airbox-apk
+          path: ${{ steps.apk.outputs.file }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref == 'refs/heads/main' && format('v{0}-build{1}', steps.apk.outputs.version, github.run_number) || format('preview-build{0}', github.run_number) }}
+          name: ${{ github.ref == 'refs/heads/main' && format('Airbox {0} (build {1})', steps.apk.outputs.version, github.run_number) || format('Airbox preview (build {0})', github.run_number) }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          make_latest: ${{ github.ref == 'refs/heads/main' }}
+          files: ${{ steps.apk.outputs.file }}
+          body: |
+            Test build of the Airbox Android app (debug-signed, Android 7.0 or newer).
+
+            **Install on your phone:** tap the `.apk` below, allow your browser to install unknown apps
+            when Android asks, then tap Install. Play Protect may say "unknown developer": choose Install anyway.
+
+            Built from ${{ github.sha }} on `${{ github.ref_name }}`.
