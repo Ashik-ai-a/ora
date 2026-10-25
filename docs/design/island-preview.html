@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airbox island animation</title>
+<style>
+  /* Design prototype of ios/Airbox/IslandHalo.swift + the Live Activity DotRing.
+     Same geometry (126×37.33 island, 7 pt gap, dots every 7.5 pt) and timing. */
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #000; display: grid; place-items: center; min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif; }
+  #phone { position: relative; width: 393px; height: 300px; overflow: hidden; border-radius: 0 0 28px 28px;
+    background: radial-gradient(120% 90% at 50% 0%, #1b2440 0%, #0b0d14 60%); }
+  #status { position: absolute; top: 17px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 32px 0 44px;
+    color: #fff; font-size: 17px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  #status .right { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  #app { position: absolute; top: 96px; left: 16px; right: 16px; color: #fff; transition: none; }
+  #app h1 { font-family: -apple-system, "SF Pro Display", "Inter Display", Inter, sans-serif; font-size: 34px; font-weight: 700;
+    letter-spacing: 0.01em; margin: 0 0 14px; }
+  #app .card { background: #1c1c1e; border-radius: 16px; padding: 14px 16px; color: #ebebf5cc; font-size: 15px; letter-spacing: -0.015em; }
+  #app .paste { margin-top: 12px; background: #0a84ff; color: #fff; border-radius: 999px; text-align: center; padding: 13px;
+    font-weight: 600; font-size: 17px; letter-spacing: -0.022em; }
+  #home { position: absolute; inset: 70px 0 0; display: grid; grid-template-columns: repeat(4, 62px); gap: 22px 30px;
+    justify-content: center; padding-top: 30px; opacity: 0; }
+  #home i { width: 62px; height: 62px; border-radius: 15px; display: block; }
+  svg { position: absolute; left: 0; top: 0; overflow: visible; }
+  #caption { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; color: #ffffffb3; padding: 28px 0 12px;
+    font-size: 13px; letter-spacing: -0.006em; background: linear-gradient(transparent, #000c 55%); }
+</style>
+</head>
+<body>
+<div id="phone">
+  <div id="home"></div>
+  <div id="app">
+    <h1>Airbox</h1>
+    <div class="card">Copy anything on this iPhone, then:<div class="paste">Paste &amp; Send</div></div>
+  </div>
+  <div id="status"><span>9:41</span><span class="right">􀙇 5G ▮▮▮</span></div>
+  <svg id="art" width="393" height="300"></svg>
+  <div id="caption"></div>
+</div>
+<script>
+"use strict";
+const W = 393, ISLAND = { w: 126, h: 37.33, x: (393 - 126) / 2, y: 11.33 };
+const GAP = 7, BLUE = "#3f8fff", GREEN = "#30d158";
+const art = document.getElementById("art");
+const home = document.getElementById("home");
+const colors = ["#ff9f0a","#30d158","#0a84ff","#bf5af2","#ff375f","#64d2ff","#ffd60a","#5e5ce6","#ff453a","#32d74b","#ac8e68","#66d4cf"];
+home.innerHTML = colors.map(c => `<i style="background:linear-gradient(160deg,${c},#0006)"></i>`).join("");
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const easeInOut = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+// Critically-damped-ish spring with a little overshoot, like SwiftUI .spring(response: .35, damping: .55)
+const spring = (x) => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.exp(-6 * x) * Math.cos(9 * x);
+
+function capsule(x, y, w, h) {
+  const r = h / 2;
+  // Bottom centre, clockwise, same as HaloCapsule in Swift.
+  return `M ${x + w / 2} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} Z`;
+}
+const capsuleLength = (w, h) => 2 * (w - h) + Math.PI * h;
+
+function dotRing(cx, cy, size, progress, tint) {
+  if (progress >= 1) {
+    return `<circle cx="${cx}" cy="${cy}" r="${size / 2}" fill="${tint}"/>` +
+      `<path d="M ${cx - size * .22} ${cy + size * .02} L ${cx - size * .06} ${cy + size * .18} L ${cx + size * .24} ${cy - size * .16}"
+         fill="none" stroke="#fff" stroke-width="${size * .14}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  const n = 12, lit = Math.floor(progress * n);
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    s += `<circle cx="${cx + Math.cos(a) * size * .42}" cy="${cy + Math.sin(a) * size * .42}" r="${size * .075}" fill="${i < lit ? tint : "#ffffff38"}"/>`;
+  }
+  return s;
+}
+
+/** Deterministic frame renderer: t in seconds. */
+window.render = function (t) {
+  let s = "";
+  const cap = document.getElementById("caption");
+  const app = document.getElementById("app");
+
+  // ---------- Scene 1 (0–4.6 s): in-app halo hugging the island ----------
+  if (t < 4.6) {
+    home.style.opacity = 0; app.style.opacity = 1; app.style.transform = "none";
+    cap.textContent = "In the Airbox app — dots trace the Dynamic Island";
+    const appear = easeOut(seg(t, 0.15, 0.55));
+    const progress = easeInOut(seg(t, 0.4, 2.7));
+    const done = t >= 2.75;
+    const fuse = spring(seg(t, 2.75, 3.35));
+    const sink = easeInOut(seg(t, 4.0, 4.55));
+    const scale = (0.86 + 0.14 * appear) * (1 - 0.3 * sink) * (done ? 1 + 0.04 * Math.sin(Math.PI * seg(t, 2.75, 3.1)) : 1);
+    const opacity = appear * (1 - sink);
+    const rx = ISLAND.x - GAP, ry = ISLAND.y - GAP, rw = ISLAND.w + 2 * GAP, rh = ISLAND.h + 2 * GAP;
+    const cx = rx + rw / 2, cy = ry + rh / 2;
+    const d = capsule(rx, ry, rw, rh), L = capsuleLength(rw, rh);
+    const dots = `stroke-width="3.6" stroke-linecap="round" stroke-dasharray="0.001 7.5" fill="none"`;
+    s += `<g opacity="${opacity}" transform="translate(${cx} ${cy}) scale(${scale}) translate(${-cx} ${-cy})">`;
+    s += `<defs><filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <mask id="m"><path d="${d}" stroke="#fff" stroke-width="10" fill="none" stroke-dasharray="${progress * L} ${L}"/></mask></defs>`;
+    s += `<path d="${d}" stroke="#ffffff26" ${dots} opacity="${1 - fuse}"/>`;
+    s += `<path d="${d}" stroke="${BLUE}" ${dots} mask="url(#m)" filter="url(#glow)" opacity="${1 - fuse}"/>`;
+    if (done) s += `<path d="${d}" stroke="${GREEN}" stroke-width="2.5" fill="none" filter="url(#glow)" opacity="${clamp(fuse * 1.4)}"/>`;
+    // Label pill under the island; on completion a ✓ badge pops in at its left
+    // (beside the island it would hit the status-bar icons).
+    const label = done ? "Sent to Pixel" : `${Math.round(progress * 100)}%`;
+    const b = done ? spring(seg(t, 2.85, 3.45)) : 0, draw = easeOut(seg(t, 2.97, 3.32));
+    const lw = done ? 112 + 20 * b : 54;
+    const ly = ry + rh + 24;
+    s += `<g transform="translate(${cx} ${ly})"><rect x="${-lw / 2}" y="-13" width="${lw}" height="26" rx="13" fill="#ffffff1f"/>
+      <text x="${done ? 10 * b : 0}" text-anchor="middle" dominant-baseline="central" fill="#ffffffd9" font-size="13" font-weight="600"
+        style="font-family: ui-rounded, 'SF Pro Rounded', Inter, sans-serif; font-variant-numeric: tabular-nums">${label}</text>`;
+    if (done) {
+      s += `<g transform="translate(${-lw / 2 + 15} 0) scale(${b})"><circle r="10" fill="${GREEN}" filter="url(#glow)"/>
+        <path d="M -4.3 0.3 L -1.3 3.3 L 4.3 -3" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+          stroke-dasharray="15" stroke-dashoffset="${15 * (1 - draw)}"/></g>`;
+    }
+    s += `</g>`;
+    s += `</g>`;
+    s += `<rect x="${ISLAND.x}" y="${ISLAND.y}" width="${ISLAND.w}" height="${ISLAND.h}" rx="${ISLAND.h / 2}" fill="#000"/>`;
+  }
+
+  // ---------- Scene 2 (4.6–9.6 s): app closed — progress lives inside the island ----------
+  else {
+    const u = t - 4.6;
+    const leave = easeInOut(seg(u, 0, 0.45));
+    app.style.opacity = 1 - leave; app.style.transform = `scale(${1 - 0.12 * leave})`;
+    home.style.opacity = leave;
+    cap.textContent = "Left the app — Live Activity: dot ring fills, then ✓";
+    const expand = spring(seg(u, 0.2, 0.75));
+    const w = ISLAND.w + (212 - ISLAND.w) * expand, h = ISLAND.h;
+    const x = (W - w) / 2, y = ISLAND.y;
+    const progress = easeInOut(seg(u, 0.6, 3.6));
+    s += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" fill="#000"/>`;
+    if (expand > 0.6) {
+      const o = seg(expand, 0.6, 1);
+      // Compact leading: transfer symbol
+      s += `<g opacity="${o}" transform="translate(${x + 22} ${y + h / 2})">
+        <circle r="10.5" fill="${progress >= 1 ? GREEN : BLUE}"/>
+        <path d="M -3 -4.5 V 4.5 M -5.5 -2 L -3 -4.8 L -0.5 -2 M 3 4.5 V -4.5 M 0.5 2 L 3 4.8 L 5.5 2" stroke="#000" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g>`;
+      // Compact trailing: DotRing
+      const pop = progress >= 1 ? spring(seg(u, 3.6, 4.1)) : 1;
+      s += `<g opacity="${o}" transform="translate(${x + w - 22} ${y + h / 2}) scale(${pop}) translate(${-(x + w - 22)} ${-(y + h / 2)})">${dotRing(x + w - 22, y + h / 2, 22, progress, progress >= 1 ? GREEN : BLUE)}</g>`;
+    }
+  }
+  art.innerHTML = s;
+};
+window.DURATION = 9.6;
+// Live playback when opened in a browser (the renderer drives frames itself).
+if (!window.__recording) {
+  const start = performance.now();
+  (function loop(now) { render(((now - start) / 1000) % (DURATION + 0.8)); requestAnimationFrame(loop); })(start);
+}
+</script>
+</body>
+</html>

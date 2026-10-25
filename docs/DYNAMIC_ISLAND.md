@@ -48,6 +48,45 @@ time-bound things, ranked like this:
 These rules live in one place: `core/.../live/LiveStatus.kt` (`IslandModel`, 9 tests). The
 iPhone app mirrors them in `ios/Airbox/IslandController.swift`.
 
+## Look and motion
+
+![Island animation](design/island-animation.gif)
+
+(A design preview rendered from `docs/design/island-preview.html`, using the same geometry
+and timing as the Swift code. Open the HTML in a browser to watch it live. The preview uses
+Inter because SF Pro isn't available outside Apple devices; the app itself uses SF Pro.)
+
+**While Airbox is open** (`ios/Airbox/IslandHalo.swift`):
+1. A ring of dots fades in 7 pt outside the island, following its capsule shape.
+2. Dots light up clockwise from the bottom centre as the file sends. A pill underneath
+   counts up in SF Pro Rounded, with digits that roll as they change.
+3. At 100% the dots fuse into one glowing green line with a small spring pulse. The pill
+   becomes "✓ Sent to Pixel": the tick draws itself in, with a success haptic.
+4. After 1.6 s it all shrinks back into the island and fades.
+5. On failure the ring turns red with an error haptic.
+6. With Reduce Motion on, progress updates appear without the motion.
+
+**After you leave the app** (the Live Activity): the island's right side shows a 12-dot ring
+that lights up as progress comes in, then turns into a green ✓. The expanded island shows a
+large dot ring with the percentage in the middle.
+
+Two limits from Apple, not choices:
+- **Nothing can be drawn outside the island from a Live Activity.** The system clips it. The
+  dots-around-the-island effect is only possible while the Airbox app is on screen, which
+  is when you tap Paste & Send anyway.
+- **Live Activities don't animate frame by frame.** They change when the app sends an
+  update, with a short built-in transition. The dot ring therefore steps up rather than
+  sweeping smoothly.
+
+Island position comes from measured sizes (126 × 37.33 pt; 11.33 pt from the top, 14 pt on
+16 Pro models), because Apple doesn't publish the island's frame. Check it on each new
+iPhone model. Phones without an island get the same animation around a virtual pill under
+the status bar.
+
+**Typography:** the iPhone system font everywhere: SF Pro Text and SF Pro Display, with SF Pro
+Rounded and fixed-width digits for numbers. The Safari page uses the same font and follows
+the iPhone's text-size setting.
+
 ## The big limitation: when the iPhone app is in the background
 
 Right now the iPhone app hears from Android over **Wi-Fi** (a long-poll on

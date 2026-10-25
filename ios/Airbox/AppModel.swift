@@ -8,6 +8,9 @@ final class AppModel: ObservableObject {
     @Published var incomingText: AirboxClient.SharedText?
     @Published var status: String?
     @Published var uploads: [Upload] = []
+    /// Drives the dot ring around the Dynamic Island while the app is open.
+    @Published var halo: HaloState?
+    private var haloHide: Task<Void, Never>?
 
     struct Upload: Identifiable { let id = UUID(); let name: String; var progress: Double; var done = false; var failed = false }
 
@@ -52,14 +55,18 @@ final class AppModel: ObservableObject {
 
     func send(text: String) {
         Task {
+            showHalo(.sending(0.15), "Sending…")
             do {
                 try await client.sendText(text)
+                // Text is instant; let the ring run round once so the send is felt, not missed.
+                showHalo(.sending(1), "Sending…")
+                try? await Task.sleep(for: .milliseconds(380))
+                showHalo(.done, "Copied to \(peerName)")
                 status = "Sent — paste it on \(peerName)."
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 await island.show(IslandController.clipboardSent(preview: text, peer: peerName))
             } catch {
+                showHalo(.failed, "Couldn’t reach \(peerName)")
                 status = error.localizedDescription
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
     }
@@ -75,6 +82,7 @@ final class AppModel: ObservableObject {
                         Task { @MainActor in
                             self.setProgress(upload.id, p)
                             let overall = (Double(index) + p) / Double(files.count)
+                            self.showHalo(.sending(overall), "\(Int(overall * 100))%")
                             await self.island.show(IslandController.upload(id: batch, name: name, count: files.count,
                                                                             progress: overall, peer: self.peerName))
                         }
@@ -83,12 +91,26 @@ final class AppModel: ObservableObject {
                 } catch {
                     if let i = uploads.firstIndex(where: { $0.id == upload.id }) { uploads[i].failed = true }
                     status = error.localizedDescription
+                    showHalo(.failed, "Stopped")
                     await island.end(id: "transfer:\(batch)")
                     return
                 }
             }
+            showHalo(.done, files.count == 1 ? "Sent" : "\(files.count) sent")
             await island.show(IslandController.upload(id: batch, name: "\(files.count) item(s)", count: files.count,
                                                       progress: 1, peer: peerName, finished: true))
+        }
+    }
+
+    private func showHalo(_ phase: HaloState.Phase, _ label: String) {
+        haloHide?.cancel()
+        halo = HaloState(phase: phase, label: label)
+        if phase.isSending { return }
+        // Hold the ✓ long enough to read, then sink back into the island.
+        haloHide = Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            halo = nil
         }
     }
 

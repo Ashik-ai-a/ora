@@ -10,6 +10,7 @@ struct AirboxApp: App {
             Group {
                 if model.peer == nil { PairingView() } else { ContentView() }
             }
+            .overlay { IslandHaloOverlay(state: model.halo) }
             .environmentObject(model)
             .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
         }
