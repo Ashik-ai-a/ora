@@ -21,6 +21,7 @@ object Notifications {
     const val CHANNEL_SERVICE = "airbox.service"
     const val CHANNEL_RECEIVED = "airbox.received"
     const val CHANNEL_PROGRESS = "airbox.progress"
+    const val CHANNEL_INCOMING = "airbox.incoming"
     const val ID_SERVICE = 1
     const val ID_PROGRESS = 2
     private const val ID_RECEIVED_BASE = 100
@@ -38,6 +39,10 @@ object Notifications {
                 },
                 NotificationChannel(CHANNEL_RECEIVED, "Received from iPhone", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Text and files that arrive from your iPhone."
+                    lightColor = ACCENT
+                },
+                NotificationChannel(CHANNEL_INCOMING, "Accept or decline", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Asks before saving photos and files your iPhone sends, like AirDrop."
                     lightColor = ACCENT
                 },
                 NotificationChannel(CHANNEL_PROGRESS, "Transfers in progress", NotificationManager.IMPORTANCE_LOW).apply {
@@ -89,6 +94,31 @@ object Notifications {
                 .setContentIntent(open ?: openApp(context))
                 .build())
     }
+
+    /**
+     * The AirDrop-style prompt: pops up at the top of the screen ("heads-up") with Accept,
+     * Decline and Always accept. One prompt per share, however many photos it holds.
+     */
+    fun incoming(context: Context, promptId: String, from: String, summary: String, actions: Map<String, PendingIntent>, open: PendingIntent) {
+        val b = builder(context, CHANNEL_INCOMING)
+            .setContentTitle("$from would like to share")
+            .setContentText(summary)
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+        if (Build.VERSION.SDK_INT < 26) {
+            @Suppress("DEPRECATION") b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL)
+        }
+        actions.forEach { (label, intent) -> b.addAction(Notification.Action.Builder(null, label, intent).build()) }
+        notify(context, promptNotificationId(promptId), b.build())
+    }
+
+    fun clearIncoming(context: Context, promptId: String) {
+        context.getSystemService(NotificationManager::class.java)?.cancel(promptNotificationId(promptId))
+    }
+
+    private fun promptNotificationId(promptId: String) = 1_000 + (promptId.hashCode() and 0xffff)
 
     /**
      * Shows [item] as Android's equivalent of the Dynamic Island. On Android 16+ a

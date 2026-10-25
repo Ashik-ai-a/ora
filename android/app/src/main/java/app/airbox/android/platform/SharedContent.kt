@@ -93,5 +93,42 @@ object SharedContent {
         return Uri.fromFile(target)
     }
 
+    /**
+     * Saves a received file where people expect it: photos in Pictures/Airbox and videos in
+     * Movies/Airbox (so they show up in the Photos / Gallery app straight away), anything
+     * else in Downloads/Airbox. Returns a content Uri other apps can open.
+     */
+    fun publishReceived(context: Context, file: File, mimeType: String): Uri? {
+        val isImage = mimeType.startsWith("image/")
+        val isVideo = mimeType.startsWith("video/")
+        if (!isImage && !isVideo) return publishToDownloads(context, file, mimeType)
+        if (Build.VERSION.SDK_INT >= 29) {
+            val collection = if (isImage) MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val folder = (if (isImage) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_MOVIES) + "/Airbox"
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, folder)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(collection, values) ?: return null
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            file.delete()
+            return uri
+        }
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(
+            if (isImage) Environment.DIRECTORY_PICTURES else Environment.DIRECTORY_MOVIES), "Airbox").apply { mkdirs() }
+        val target = File(dir, app.airbox.core.transfer.FileNames.uniquify(file.name) { File(dir, it).exists() })
+        if (!file.renameTo(target)) { file.copyTo(target, overwrite = false); file.delete() }
+        // Android 7–9: tell the media scanner so the Gallery sees it now, not after a reboot.
+        android.media.MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), arrayOf(mimeType), null)
+        return Uri.fromFile(target)
+    }
+
     fun cacheCopyForSharing(file: File): OutgoingFile = PathOutgoingFile(file.toPath())
 }

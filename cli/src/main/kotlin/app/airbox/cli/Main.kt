@@ -191,6 +191,8 @@ private fun printQr(text: String) {
     }
 }
 
+@Volatile private var bridgeRef: app.airbox.core.web.WebBridge? = null
+
 private fun web(args: List<String>) {
     val dir = Paths.get(option(args, "--dir") ?: Paths.get(System.getProperty("user.home"), "Downloads", "Airbox").toString())
     Files.createDirectories(dir)
@@ -198,10 +200,27 @@ private fun web(args: List<String>) {
         DirectoryReceiveStorage(dir), deviceName,
         onText = { text -> println("\n[text from iPhone]\n$text\n") },
         onFile = { _, saved -> println("[file from iPhone] saved as $saved in $dir") },
+        onIncoming = { t ->
+            println("\n\"${t.fromName}\" would like to share ${t.fileName} (${t.size / 1024} KiB)")
+            Thread {
+                val answer = readlnOrNull()?.trim()?.lowercase()
+                when (answer) {
+                    "a", "always" -> bridgeRef?.accept(t.id, always = true)
+                    "y", "yes" -> bridgeRef?.accept(t.id)
+                    else -> bridgeRef?.decline(t.id)
+                }
+            }.start()
+            print("Accept? [y]es / [a]lways / [N]o ")
+        },
+        onClipboardImage = { _, saved -> println("[image copied on iPhone] saved as $saved") },
+        pairedStore = app.airbox.core.web.FilePairedDeviceStore(home.resolve("paired-web.json")),
         port = option(args, "--port")?.toInt() ?: 0,
     ).start()
+    bridgeRef = bridge
     option(args, "--share-text")?.let { bridge.shareText(it) }
     option(args, "--share-file")?.let { bridge.shareFile(PathOutgoingFile(Paths.get(it))) }
+    val known = bridge.pairedDevices()
+    if (known.isNotEmpty()) println("Remembered: ${known.joinToString { it.name }} (no need to scan again)\n")
     val url = bridge.pairingUrl(lanAddress())
     println("Point the iPhone camera at this code (same Wi-Fi; single use, 10 minutes):\n")
     printQr(url)

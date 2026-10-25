@@ -28,10 +28,14 @@ class WebBridgeTest {
     private val out = Files.createDirectories(tmp.resolve("in"))
     private val texts = LinkedBlockingQueue<String>()
     private val actions = LinkedBlockingQueue<Pair<app.airbox.core.live.IslandAction, String?>>()
+    private val incoming = LinkedBlockingQueue<WebBridge.PendingTransfer>()
+    private val clipImages = LinkedBlockingQueue<String>()
+    private val store = app.airbox.core.web.FilePairedDeviceStore(tmp.resolve("paired.json"))
     private var storage: ReceiveStorage = DirectoryReceiveStorage(out)
     private val bridge = WebBridge(object : ReceiveStorage by DirectoryReceiveStorage(out) {
         override fun freeBytes() = storage.freeBytes()
-    }, "Pixel 9", onText = { texts += it }, onAction = { a, t -> actions += a to t }, bindAddress = "127.0.0.1").start()
+    }, "Pixel 9", onText = { texts += it }, onAction = { a, t -> actions += a to t },
+        onIncoming = { incoming += it }, onClipboardImage = { _, saved -> clipImages += saved }, pairedStore = store, bindAddress = "127.0.0.1").start()
     private val http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
     private val base get() = "http://127.0.0.1:${bridge.port}"
 
@@ -41,11 +45,13 @@ class WebBridgeTest {
         http.send(HttpRequest.newBuilder(URI("$base$path")).apply { cookie?.let { header("Cookie", it) } }.GET().build(),
             HttpResponse.BodyHandlers.ofByteArray())
 
-    private fun post(path: String, body: ByteArray, cookie: String? = null, csrf: Boolean = true, auth: String? = null) =
+    private fun post(path: String, body: ByteArray, cookie: String? = null, csrf: Boolean = true, auth: String? = null,
+                     headers: Map<String, String> = emptyMap()) =
         http.send(HttpRequest.newBuilder(URI("$base$path")).apply {
             cookie?.let { header("Cookie", it) }
             if (csrf) header("X-Airbox", "1")
             auth?.let { header("Authorization", "Bearer $it") }
+            headers.forEach { (k, v) -> header(k, v) }
         }.POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(), HttpResponse.BodyHandlers.ofString())
 
     /** What happens when the iPhone camera opens the QR link. */
@@ -104,10 +110,14 @@ class WebBridgeTest {
         val cookie = scanQr()
         val photo = Random(1).nextBytes(2_500_000)
         val r = post("/api/upload?name=" + java.net.URLEncoder.encode("../IMG_0042.HEIC", Charsets.UTF_8), photo, cookie)
-        assertEquals(200, r.statusCode())
-        assertTrue("IMG_0042.HEIC" in r.body())
+        assertEquals(202, r.statusCode(), "waits for Accept on Android")
+        val offer = incoming.poll(2, TimeUnit.SECONDS)!!
+        assertEquals("IMG_0042.HEIC", offer.fileName)
+        assertTrue(out.listDirectoryEntries().none { it.name == "IMG_0042.HEIC" }, "nothing is visible before Accept")
+        bridge.accept(offer.id)
+        assertTrue("\"status\":\"saved\"" in String(get("/api/transfers/${offer.id}", cookie).body()))
         assertContentEquals(photo, out.resolve("IMG_0042.HEIC").readBytes())
-        assertEquals(setOf("IMG_0042.HEIC"), out.listDirectoryEntries().filter { !it.name.startsWith(".") }.map { it.name }.toSet())
+        assertEquals(setOf("IMG_0042.HEIC"), out.listDirectoryEntries().filter { !it.name.startsWith(".") && it.name != "paired.json" }.map { it.name }.toSet())
     }
 
     @Test fun uploadRefusedWhenAndroidIsFull() {
@@ -186,6 +196,92 @@ class WebBridgeTest {
         assertEquals(204, post("/api/action", """{"action":"DECLINE_CALL","target":"c1"}""".toByteArray(), csrf = false, auth = key).statusCode())
         assertEquals(app.airbox.core.live.IslandAction.DECLINE_CALL to "c1", actions.poll(2, TimeUnit.SECONDS))
         assertEquals(400, post("/api/action", """{"action":"FORMAT_PHONE"}""".toByteArray(), csrf = false, auth = key).statusCode())
+    }
+
+    @Test fun pairedIphoneIsRememberedAcrossRestarts() {
+        val cookie = scanQr()
+        assertTrue(cookie.startsWith("airbox_device="))
+        bridge.close()
+        // A new bridge (app restarted) with the same store still knows this iPhone: no QR needed.
+        val again = WebBridge(DirectoryReceiveStorage(out), "Pixel 9", onText = { texts += it }, pairedStore = store,
+            bindAddress = "127.0.0.1").start()
+        try {
+            val r = http.send(HttpRequest.newBuilder(URI("http://127.0.0.1:${again.port}/api/text")).header("Cookie", cookie)
+                .header("X-Airbox", "1").POST(HttpRequest.BodyPublishers.ofString("still paired")).build(), HttpResponse.BodyHandlers.ofString())
+            assertEquals(204, r.statusCode())
+            assertEquals("still paired", texts.poll(2, TimeUnit.SECONDS))
+        } finally { again.close() }
+        // Only a hash of the key is stored on disk.
+        assertTrue(cookie.substringAfter('=') !in Files.readString(tmp.resolve("paired.json")))
+    }
+
+    @Test fun forgettingAPhoneRevokesIt() {
+        val cookie = scanQr()
+        bridge.forget(bridge.pairedDevices().single().id)
+        assertEquals(401, post("/api/text", "x".toByteArray(), cookie).statusCode())
+    }
+
+    @Test fun declineDeletesTheFile() {
+        val cookie = scanQr()
+        post("/api/upload?name=private.jpg", ByteArray(5_000), cookie)
+        val offer = incoming.poll(2, TimeUnit.SECONDS)!!
+        bridge.decline(offer.id)
+        assertTrue("\"status\":\"declined\"" in String(get("/api/transfers/${offer.id}", cookie).body()))
+        assertTrue(out.toFile().walk().none { it.isFile && it.name != "paired.json" && it.length() == 5_000L })
+    }
+
+    @Test fun alwaysAcceptSkipsThePromptNextTime() {
+        val cookie = scanQr()
+        post("/api/upload?name=a.jpg", ByteArray(100), cookie)
+        bridge.accept(incoming.poll(2, TimeUnit.SECONDS)!!.id, always = true)
+        val r = post("/api/upload?name=b.jpg", ByteArray(100), cookie)
+        assertEquals(200, r.statusCode())
+        assertTrue(incoming.isEmpty(), "no prompt for a trusted iPhone")
+        assertTrue(out.resolve("b.jpg").toFile().exists())
+    }
+
+    @Test fun onePromptForABatchOfPhotos() {
+        val cookie = scanQr()
+        val batch = mapOf("X-Airbox-Batch" to "share-1")
+        post("/api/upload?name=1.jpg", ByteArray(10), cookie, headers = batch)
+        post("/api/upload?name=2.jpg", ByteArray(10), cookie, headers = batch)
+        val first = incoming.poll(2, TimeUnit.SECONDS)!!
+        incoming.poll(2, TimeUnit.SECONDS)
+        bridge.accept(first.id)
+        // A third photo of the same share arriving after Accept is saved without asking again.
+        assertEquals(200, post("/api/upload?name=3.jpg", ByteArray(10), cookie, headers = batch).statusCode())
+        assertEquals(setOf("1.jpg", "2.jpg", "3.jpg"), out.listDirectoryEntries().map { it.name }.filter { it.endsWith(".jpg") }.toSet())
+    }
+
+    @Test fun copiedImageGoesToTheClipboardWithoutAPrompt() {
+        val key = bridge.createShortcutKey("Back Tap")
+        val png = Random(3).nextBytes(20_000)
+        val r = post("/api/clipboard", png, csrf = false, auth = key, headers = mapOf("Content-Type" to "image/png"))
+        assertEquals(200, r.statusCode())
+        val saved = clipImages.poll(2, TimeUnit.SECONDS)!!
+        assertContentEquals(png, out.resolve(saved).readBytes())
+        assertEquals(204, post("/api/clipboard", "plain text".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals("plain text", texts.poll(2, TimeUnit.SECONDS))
+    }
+
+    @Test fun shortcutPhotoWithoutTypeIsRecognisedAsAPhoto() {
+        val key = bridge.createShortcutKey("Share sheet")
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + Random(4).nextBytes(1000)
+        post("/api/upload?name=Photo", jpeg, csrf = false, auth = key, headers = mapOf("Content-Type" to "application/octet-stream"))
+        val offer = incoming.poll(2, TimeUnit.SECONDS)!!
+        assertEquals("Photo.jpg", offer.fileName)
+        assertEquals("image/jpeg", offer.mimeType)
+        bridge.accept(offer.id)
+        assertContentEquals(jpeg, out.resolve("Photo.jpg").readBytes())
+    }
+
+    @Test fun pairedBrowserCanCreateItsShortcutKey() {
+        val cookie = scanQr()
+        val r = post("/api/shortcut-key", ByteArray(0), cookie)
+        val key = Regex("\"key\":\"([^\"]+)\"").find(r.body())!!.groupValues[1]
+        assertEquals(204, post("/api/clipboard", "via shortcut".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals("via shortcut", texts.poll(2, TimeUnit.SECONDS))
+        assertEquals(2, bridge.pairedDevices().size)
     }
 
     @Test fun wifiQrEscapesSpecialCharacters() {

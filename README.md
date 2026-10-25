@@ -16,6 +16,7 @@ before assuming anything works on a phone.
 | `cli/` | Desktop reference client for interop testing and for the future Swift port. |
 | `docs/FEASIBILITY.md` | Platform reality check, compatibility matrix, architecture decision. **Start here.** |
 | `docs/COMPANION.md` | Linked-devices features (notifications, calls, replies, media, clipboard, find device): what's possible between Android and iPhone and what isn't. |
+| `docs/PAIR_ONCE.md` | Pair once, Accept/Decline, photos into the Gallery, copy-paste, and the native AirDrop option on the OnePlus 15. |
 | `docs/NO_APP_IPHONE.md` | iPhone with **no app**: AirDrop → Quick Share, the Safari page, and Shortcuts/Back Tap for clipboard. |
 | `docs/DYNAMIC_ISLAND.md` | Optional iPhone app: one-tap Paste & Send, and what goes on the Dynamic Island (and Android 16 Live Updates). |
 | `android/` | Android app (Compose UI, foreground service, share sheet, works on Android 7+ and every major brand). System layer type-checked against Android 16; UI not yet compiled. See `android/README.md`. |
@@ -31,7 +32,7 @@ before assuming anything works on a phone.
 Requires JDK 17+ and Gradle 8.x.
 
 ```sh
-gradle test                 # 75 unit + end-to-end tests + Android API type-check
+gradle test                 # 83 unit + end-to-end tests + Android API type-check
 gradle :cli:installDist     # builds cli/build/install/airbox/bin/airbox
 ```
 

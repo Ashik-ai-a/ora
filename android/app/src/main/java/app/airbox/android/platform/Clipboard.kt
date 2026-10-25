@@ -27,6 +27,15 @@ object Clipboard {
         manager.setPrimaryClip(clip)
     }
 
+    /**
+     * Puts an image on the clipboard as a content Uri, so the keyboard's clipboard (Gboard,
+     * Samsung Keyboard, SwiftKey) can paste it into chats, notes and other apps.
+     */
+    fun putImage(context: Context, uri: android.net.Uri) {
+        val manager = context.getSystemService(ClipboardManager::class.java) ?: return
+        manager.setPrimaryClip(ClipData.newUri(context.contentResolver, "Image from iPhone", uri))
+    }
+
     fun read(context: Context): String? {
         val manager = context.getSystemService(ClipboardManager::class.java) ?: return null
         val clip = manager.primaryClip ?: return null

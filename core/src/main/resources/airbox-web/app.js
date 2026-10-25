@@ -77,6 +77,7 @@
       $("peer").textContent = peerName;
       $("avatar").textContent = initials(peerName);
       $("inboxTitle").textContent = "From " + peerName;
+      document.querySelectorAll(".peerName").forEach((n) => { n.textContent = peerName; });
       setOnline(true);
     });
   }).catch(() => setOnline(false));
@@ -107,7 +108,7 @@
     let p = 0.02;
     const sweep = setInterval(() => ring.progress(p = Math.min(0.92, p + 0.1), "Sending…"), 45);
     try {
-      const r = await api("/api/text", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
+      const r = await api("/api/clipboard", { method: "POST", headers: { "Content-Type": "text/plain; charset=utf-8" }, body: text });
       if (!r.ok) throw new Error(await r.text());
       await new Promise((res) => setTimeout(res, 320));
       clearInterval(sweep);
@@ -125,23 +126,53 @@
   });
 
   // ---- Files and photos (one ring for the whole batch) ----
+  // Like AirDrop: send, then wait for the other phone to Accept. Several photos from one
+  // pick share a batch, so Android asks once.
   async function sendFiles(files) {
     if (!files.length) return;
     const total = files.reduce((n, f) => n + f.size, 0) || 1;
-    let before = 0, ok = 0;
+    const batch = Math.random().toString(36).slice(2, 10);
+    let before = 0;
+    const results = [];
     ring.start();
     for (const f of files) {
-      const good = await upload(f, (loaded) => ring.progress((before + loaded) / total));
+      results.push(await upload(f, batch, (loaded) => ring.progress((before + loaded) / total)));
       before += f.size;
-      if (good) ok++;
     }
-    if (ok === files.length) {
-      ring.done(files.length === 1 ? "Sent" : `${files.length} items sent`);
-      toast(files.length === 1 ? "Sent to " + peerName : `Sent ${files.length} items to ${peerName}`);
-    } else {
-      ring.fail(`${files.length - ok} of ${files.length} didn’t send`);
+    if (results.some((r) => !r)) {
+      ring.fail("Couldn’t send");
       toast("Some items didn’t send. Try them again.", true);
+      return;
     }
+    const waiting = results.filter((r) => r.status === "pending");
+    let outcome = "saved";
+    if (waiting.length) {
+      radar.classList.add("waiting");
+      $("peerStatusText").textContent = "Waiting for " + peerName + " to accept…";
+      outcome = await waitFor(waiting[waiting.length - 1].id);
+      radar.classList.remove("waiting");
+    }
+    if (outcome === "saved") {
+      ring.done(files.length === 1 ? "Saved on " + peerName : `${files.length} saved on ${peerName}`);
+      toast(files.length === 1 ? "Saved on " + peerName : `Saved ${files.length} items on ${peerName}`);
+    } else {
+      ring.fail(outcome === "declined" ? "Declined" : "Not accepted in time");
+      toast(outcome === "declined" ? peerName + " declined" : "Nobody accepted on " + peerName, true);
+    }
+  }
+
+  async function waitFor(id) {
+    for (let i = 0; i < 600; i++) {
+      try {
+        const r = await api("/api/transfers/" + encodeURIComponent(id));
+        if (r.ok) {
+          const s = await r.json();
+          if (s.status !== "pending") return s.status;
+        }
+      } catch (e) { /* keep waiting through a network blip */ }
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    return "expired";
   }
   for (const id of ["photos", "files"]) {
     $(id).addEventListener("change", (ev) => {
@@ -159,7 +190,7 @@
     return svg;
   }
 
-  function upload(file, onProgress) {
+  function upload(file, batch, onProgress) {
     return new Promise((resolve) => {
       const li = document.createElement("li");
       const progress = miniRing();
@@ -170,6 +201,7 @@
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
       xhr.setRequestHeader("X-Airbox", "1");
+      xhr.setRequestHeader("X-Airbox-Batch", batch);
       xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
       xhr.upload.onprogress = (e) => {
         if (!e.lengthComputable) return;
@@ -177,14 +209,16 @@
         onProgress(e.loaded);
       };
       xhr.onload = () => {
-        const ok = xhr.status === 200;
+        const ok = xhr.status === 200 || xhr.status === 202;
         progress.querySelector(".f").setAttribute("stroke-dasharray", "100 100");
         progress.querySelector(".f").style.stroke = ok ? "var(--green)" : "var(--red)";
-        meta.textContent = ok ? "Sent" : (xhr.responseText || "Failed");
+        meta.textContent = xhr.status === 202 ? "Sent" : ok ? "Saved" : (xhr.responseText || "Failed");
         meta.classList.add(ok ? "ok" : "bad");
-        resolve(ok);
+        let body = null;
+        try { body = JSON.parse(xhr.responseText); } catch (e) { body = null; }
+        resolve(ok ? (body || { status: "saved" }) : null);
       };
-      xhr.onerror = () => { meta.textContent = "Failed"; meta.classList.add("bad"); resolve(false); };
+      xhr.onerror = () => { meta.textContent = "Failed"; meta.classList.add("bad"); resolve(null); };
       xhr.send(file);
     });
   }
@@ -228,6 +262,35 @@
       toast("Text selected — tap Copy");
     }
   });
+
+  // ---- One-time Shortcut setup (Share sheet + Back Tap clipboard) ----
+  $("makeKey").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/shortcut-key", { method: "POST" });
+      if (!r.ok) throw new Error();
+      const j = await r.json();
+      const origin = location.origin;
+      $("uploadUrl").textContent = origin + j.upload + "?name=Photo";
+      $("clipUrl").textContent = origin + j.clipboard;
+      $("authValue").textContent = "Bearer " + j.key;
+      $("keyBox").hidden = false;
+      $("makeKey").hidden = true;
+    } catch (e) {
+      toast("Couldn’t reach " + peerName, true);
+    }
+  });
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => {
+    const node = $(b.getAttribute("data-copy"));
+    const text = node.textContent;
+    const done = () => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); };
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; ta.style.fontSize = "16px";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+    let ok = false; try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    if (ok) done(); else { selectNode(node); toast("Text selected — tap Copy"); }
+  }));
 
   // ---- Poll for things Android shares ----
   let lastText = 0, lastFiles = "";

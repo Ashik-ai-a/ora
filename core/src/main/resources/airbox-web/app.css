@@ -133,6 +133,14 @@ button, label.action { font: inherit; color: inherit; }
 .pill { border: 0; background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); font-weight: 600; font-size: 0.9375rem;
   border-radius: 999px; padding: 6px 14px; cursor: pointer; }
 .empty { margin: 0; padding: 16px 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.4; }
+.setup { margin-top: 28px; }
+.pill.wide { display: block; width: 100%; margin: 0 0 16px; padding: 12px; font-size: 1.0625rem; }
+.pill.small { padding: 3px 10px; font-size: 0.8125rem; vertical-align: 1px; }
+.steps { margin: 0 0 16px; padding-left: 1.3em; color: var(--label); font-size: 0.9375rem; line-height: 1.5; }
+.steps li { margin: 0 0 10px; }
+.steps code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8125rem; background: var(--surface-2);
+  border-radius: 6px; padding: 2px 6px; word-break: break-all; }
+.radar.waiting .ring-fill { stroke: var(--label-3); }
 .foot { color: var(--label-2); font-size: 0.8125rem; line-height: 1.38; letter-spacing: -0.006em; text-align: center; margin: 28px 12px 0; }
 
 /* ---- Banner (top, like an iOS notification HUD) ---- */

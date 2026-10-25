@@ -41,8 +41,14 @@ class WebBridge(
     private val deviceName: String,
     /** Text sent from the iPhone. Android puts it on the clipboard and shows a notification. */
     private val onText: (String) -> Unit,
-    /** A file was saved (final name). */
+    /** A file was saved (final name), after it was accepted. */
     private val onFile: (FileEntry, String) -> Unit = { _, _ -> },
+    /** A file arrived and waits for Accept / Decline. Show the prompt, then call [accept] or [decline]. */
+    private val onIncoming: (PendingTransfer) -> Unit = { },
+    /** An image copied on the iPhone (saved as [String]); put it on the Android clipboard. */
+    private val onClipboardImage: (FileEntry, String) -> Unit = { _, _ -> },
+    /** Paired phones survive restarts when this is a file store. */
+    private val pairedStore: PairedDeviceStore = InMemoryPairedDeviceStore(),
     /** A button pressed on the iPhone (Dynamic Island / app): e.g. STOP_RING, DECLINE_CALL. */
     private val onAction: (IslandAction, String?) -> Unit = { _, _ -> },
     port: Int = 0,
@@ -62,8 +68,10 @@ class WebBridge(
 
     private class Expiring(val expiresAt: Long)
     private val visitTokens = ConcurrentHashMap<String, Expiring>()
-    private val sessions = ConcurrentHashMap<String, Expiring>()
-    private val deviceKeys = ConcurrentHashMap<String, String>() // key -> label
+    private val paired = ConcurrentHashMap<String, PairedDevice>().apply { pairedStore.load().forEach { put(it.keyHash, it) } }
+    private val pending = ConcurrentHashMap<String, PendingEntry>()
+    private val finished = ConcurrentHashMap<String, String>() // transfer id -> final status
+    private val acceptedBatches = ConcurrentHashMap.newKeySet<String>()
     private val failures = ConcurrentHashMap<String, MutableList<Long>>()
 
     @Serializable data class SharedText(val text: String, val updatedAtEpochMs: Long)
@@ -76,6 +84,27 @@ class WebBridge(
     @Serializable data class EventPage(val events: List<Event>, val next: Long)
     @Serializable data class ActionRequest(val action: IslandAction, val target: String? = null)
     @Serializable data class AppPairing(val key: String, val deviceName: String)
+    @Serializable data class TransferStatus(val id: String, val status: String, val savedAs: String? = null)
+
+    /** What the Accept / Decline prompt shows. */
+    data class PendingTransfer(
+        val id: String,
+        val fromDeviceId: String,
+        val fromName: String,
+        val fileName: String,
+        val size: Long,
+        val mimeType: String,
+        /** Uploads from one share (several photos) share a batch: one prompt for all of them. */
+        val batchId: String?,
+    )
+
+    private class PendingEntry(
+        val transfer: PendingTransfer,
+        val entry: FileEntry,
+        val partial: app.airbox.core.transfer.PartialFile,
+        val storageId: String,
+        val expiresAt: Long,
+    )
 
     private val events = ArrayDeque<Event>()
     private val eventLock = Object()
@@ -94,13 +123,80 @@ class WebBridge(
         return "http://${hostForUrl(host)}:$port/?t=$token"
     }
 
-    /** Long-lived key for an iOS Shortcut. Show once; the user can revoke it. */
-    fun createShortcutKey(label: String): String = randomBytes(24).toBase64Url().also { deviceKeys[it] = label }
+    /**
+     * Pairs a phone and returns its long-lived key (shown once: for a Shortcut, the iPhone
+     * app, or set as a browser cookie). The phone is remembered until [forget].
+     */
+    fun createShortcutKey(label: String): String {
+        val key = randomBytes(24).toBase64Url()
+        val hash = PairedDevice.hash(key)
+        paired[hash] = PairedDevice(hash.take(12), hash, label.take(60), pairedAtEpochMs = clock())
+        persist()
+        return key
+    }
 
-    fun revokeShortcutKey(key: String) { deviceKeys.remove(key) }
+    fun revokeShortcutKey(key: String) { paired.remove(PairedDevice.hash(key)); persist() }
 
-    /** Signs every browser out and invalidates QR codes. */
-    fun revokeAllSessions() { sessions.clear(); visitTokens.clear() }
+    fun pairedDevices(): List<PairedDevice> = paired.values.sortedByDescending { it.lastSeenEpochMs }
+
+    fun forget(deviceId: String) { paired.values.removeIf { it.id == deviceId }; persist() }
+
+    fun rename(deviceId: String, name: String) = updateDevice(deviceId) { it.copy(name = name.take(60)) }
+
+    fun setAutoAccept(deviceId: String, enabled: Boolean) = updateDevice(deviceId) { it.copy(autoAccept = enabled) }
+
+    /** Forgets every paired phone and invalidates QR codes. */
+    fun revokeAllSessions() { paired.clear(); visitTokens.clear(); persist() }
+
+    private fun updateDevice(deviceId: String, change: (PairedDevice) -> PairedDevice) {
+        val current = paired.values.firstOrNull { it.id == deviceId } ?: return
+        paired[current.keyHash] = change(current)
+        persist()
+    }
+
+    private fun persist() = pairedStore.save(paired.values.toList())
+
+    /** Saves a waiting file. [always] also skips the prompt for this phone from now on. */
+    fun accept(transferId: String, always: Boolean = false) {
+        val first = pending[transferId] ?: return
+        first.transfer.batchId?.let { acceptedBatches += it }
+        if (always) setAutoAccept(first.transfer.fromDeviceId, true)
+        val batch = first.transfer.batchId
+        pending.values.filter { it.transfer.id == transferId || (batch != null && it.transfer.batchId == batch) }
+            .forEach { save(it) }
+    }
+
+    /** Throws a waiting file (and the rest of its batch) away. */
+    fun decline(transferId: String) {
+        val first = pending[transferId] ?: return
+        val batch = first.transfer.batchId
+        pending.values.filter { it.transfer.id == transferId || (batch != null && it.transfer.batchId == batch) }
+            .forEach { drop(it, "declined") }
+    }
+
+    fun pendingTransfers(): List<PendingTransfer> { expirePending(); return pending.values.map { it.transfer } }
+
+    private fun save(p: PendingEntry) {
+        if (pending.remove(p.transfer.id) == null) return
+        try {
+            val saved = storage.publish(p.partial, FileNames.sanitize(p.entry.name), p.entry)
+            finished[p.transfer.id] = "saved:$saved"
+            onFile(p.entry, saved)
+        } finally {
+            storage.discard(p.storageId)
+        }
+    }
+
+    private fun drop(p: PendingEntry, status: String) {
+        if (pending.remove(p.transfer.id) == null) return
+        finished[p.transfer.id] = status
+        storage.discard(p.storageId)
+    }
+
+    private fun expirePending() {
+        val now = clock()
+        pending.values.filter { it.expiresAt <= now }.forEach { drop(it, "expired") }
+    }
 
     /** Text the iPhone can copy from the page (Android -> iPhone clipboard). */
     fun shareText(text: String) {
@@ -192,9 +288,9 @@ class WebBridge(
         if (req.method == "GET" && req.path == "/" && req.query["t"] != null) return redeemVisit(req)
         if (req.method == "POST" && req.path == "/api/app-pair") return pairApp(req)
 
-        val authed = sessionValid(req.cookies["airbox_sid"]) || bearerValid(req)
-        if (!authed) {
-            if (req.cookies["airbox_sid"] != null || req.header("authorization") != null || req.query["t"] != null) {
+        val device = deviceFor(req)
+        if (device == null) {
+            if (req.cookies[COOKIE] != null || req.header("authorization") != null || req.query["t"] != null) {
                 recordFailure(req.remoteAddress)
             }
             return if (req.path == "/") page("signed-out.html") else HttpResponse.text(401, "Scan the QR code on the Android phone again.")
@@ -210,8 +306,15 @@ class WebBridge(
             req.method == "GET" && req.path == "/" -> page("index.html")
             req.method == "GET" && req.path == "/api/info" -> HttpResponse.json(json.encodeToString(mapOf("deviceName" to deviceName)))
             req.method == "POST" && req.path == "/api/text" -> receiveText(req)
+            req.method == "POST" && req.path == "/api/clipboard" -> receiveClipboard(req)
+            req.method == "POST" && req.path == "/api/shortcut-key" -> {
+                val key = createShortcutKey("${device.name} · Shortcuts")
+                HttpResponse.json(json.encodeToString(mapOf("key" to key, "deviceName" to deviceName,
+                    "upload" to "/api/upload", "clipboard" to "/api/clipboard")))
+            }
+            req.method == "GET" && req.path.startsWith("/api/transfers/") -> transferStatus(req.path.removePrefix("/api/transfers/"))
             req.method == "GET" && req.path == "/api/text" -> HttpResponse.json(json.encodeToString(sharedText))
-            req.method == "POST" && req.path == "/api/upload" -> receiveFile(req)
+            req.method == "POST" && req.path == "/api/upload" -> receiveFile(req, device)
             req.method == "GET" && req.path == "/api/files" -> HttpResponse.json(json.encodeToString(sharedFiles.values.map { it.info }))
             req.method == "GET" && req.path.startsWith("/api/files/") -> download(req.path.removePrefix("/api/files/"))
             req.method == "GET" && req.path == "/api/events" -> {
@@ -237,11 +340,11 @@ class WebBridge(
             recordFailure(req.remoteAddress)
             return page("signed-out.html", 401)
         }
-        val sid = randomBytes(24).toBase64Url()
-        sessions[sid] = Expiring(clock() + SESSION_MS)
+        // Scanning once pairs this iPhone for good: a long-lived device key in a cookie.
+        val key = createShortcutKey(req.query["name"]?.ifBlank { null } ?: "iPhone")
         // Redirect drops the token from the address bar and history.
         return HttpResponse.redirect("/").apply {
-            headers["Set-Cookie"] = "airbox_sid=$sid; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_MS / 1000}"
+            headers["Set-Cookie"] = "$COOKIE=$key; Path=/; HttpOnly; SameSite=Strict; Max-Age=$REMEMBER_SECONDS"
         }
     }
 
@@ -262,16 +365,52 @@ class WebBridge(
         return HttpResponse.json(json.encodeToString(AppPairing(createShortcutKey(name), deviceName)))
     }
 
-    private fun sessionValid(sid: String?): Boolean {
-        if (sid == null) return false
-        val e = sessions[sid] ?: return false
-        if (e.expiresAt <= clock()) { sessions.remove(sid); return false }
-        return true
+    /** The paired phone behind a request: browser cookie or Bearer key (Shortcuts, the app). */
+    private fun deviceFor(req: HttpRequest): PairedDevice? {
+        val key = req.header("authorization")?.removePrefix("Bearer ")?.trim() ?: req.cookies[COOKIE] ?: return null
+        val hash = PairedDevice.hash(key)
+        val match = paired.keys.firstOrNull { constantTimeEquals(it, hash) } ?: return null
+        val device = paired[match] ?: return null
+        if (clock() - device.lastSeenEpochMs > 60_000) {
+            paired[match] = device.copy(lastSeenEpochMs = clock())
+            persist()
+        }
+        return device
     }
 
-    private fun bearerValid(req: HttpRequest): Boolean {
-        val key = req.header("authorization")?.removePrefix("Bearer ")?.trim() ?: return false
-        return deviceKeys.keys.any { constantTimeEquals(it, key) }
+    private fun transferStatus(id: String): HttpResponse {
+        expirePending()
+        val status = when {
+            pending.containsKey(id) -> TransferStatus(id, "pending")
+            else -> finished[id]?.let {
+                if (it.startsWith("saved:")) TransferStatus(id, "saved", it.removePrefix("saved:")) else TransferStatus(id, it)
+            } ?: return HttpResponse.text(404, "Unknown transfer")
+        }
+        return HttpResponse.json(json.encodeToString(status))
+    }
+
+    /**
+     * The iPhone's clipboard (from the page, a Shortcut or Back Tap). Text goes straight to
+     * the Android clipboard; an image is saved and put on the clipboard too, so it pastes
+     * into any app through the keyboard. No prompt: it's your own copy, from a paired phone.
+     */
+    private fun receiveClipboard(req: HttpRequest): HttpResponse {
+        val type = req.header("content-type")?.substringBefore(';')?.trim()?.lowercase() ?: "text/plain"
+        if (!type.startsWith("image/")) return receiveText(req)
+        if (req.contentLength > MAX_CLIPBOARD_IMAGE) throw HttpError(413, "Image too large for the clipboard")
+        val ext = when (type) { "image/png" -> "png"; "image/heic" -> "heic"; "image/gif" -> "gif"; "image/webp" -> "webp"; else -> "jpg" }
+        val entry = FileEntry(0, "Clipboard.$ext", req.contentLength, type, clock())
+        val storageId = "clip-" + randomBytes(9).toBase64Url()
+        val partial = storage.partial(storageId, entry)
+        try {
+            partial.openAppend().use { out -> req.body.copyTo(out, 64 * 1024) }
+            if (partial.length != req.contentLength) throw HttpError(400, "Upload interrupted")
+            val saved = storage.publish(partial, entry.name, entry)
+            onClipboardImage(entry, saved)
+            return HttpResponse.json(json.encodeToString(mapOf("savedAs" to saved)))
+        } finally {
+            storage.discard(storageId)
+        }
     }
 
     private fun receiveText(req: HttpRequest): HttpResponse {
@@ -281,24 +420,45 @@ class WebBridge(
         return HttpResponse.empty()
     }
 
-    private fun receiveFile(req: HttpRequest): HttpResponse {
+    /**
+     * A photo or file from the iPhone. It lands in private storage first and is only saved
+     * where other apps can see it after Accept (or straight away for "Always accept" phones).
+     * Replies 202 {"status":"pending"} while waiting; poll /api/transfers/{id}.
+     */
+    private fun receiveFile(req: HttpRequest, device: PairedDevice): HttpResponse {
         val rawName = req.query["name"]?.takeIf { it.isNotBlank() } ?: throw HttpError(400, "Missing name")
         val size = req.contentLength
         if (size > maxUploadBytes) throw HttpError(413, "File too large")
         if (storage.freeBytes() - storageReserveBytes < size) throw HttpError(507, "Not enough space on the Android phone")
-        val entry = FileEntry(0, rawName, size, req.header("content-type") ?: "application/octet-stream", null)
-        val transferId = "web-" + randomBytes(9).toBase64Url()
-        val partial = storage.partial(transferId, entry)
+        val received = FileEntry(0, rawName, size, req.header("content-type")?.substringBefore(';')?.trim() ?: "application/octet-stream", null)
+        val id = randomBytes(9).toBase64Url()
+        val storageId = "web-$id"
+        val partial = storage.partial(storageId, received)
         try {
             partial.openAppend().use { out -> req.body.copyTo(out, 64 * 1024) }
-            // Browser uploads carry no checksum over HTTP; at least never publish a truncated file.
-            if (partial.length != size) throw HttpError(400, "Upload interrupted")
-            val saved = storage.publish(partial, FileNames.sanitize(rawName), entry)
-            onFile(entry, saved)
-            return HttpResponse.json(json.encodeToString(mapOf("savedAs" to saved)))
-        } finally {
-            storage.discard(transferId)
+        } catch (e: Exception) {
+            storage.discard(storageId)
+            throw e
         }
+        // Browser uploads carry no checksum over HTTP; at least never keep a truncated file.
+        if (partial.length != size) { storage.discard(storageId); throw HttpError(400, "Upload interrupted") }
+        // Shortcuts often sends "Photo" as application/octet-stream: look at the bytes so the
+        // Gallery recognises photos and videos, and give the file its proper extension.
+        val head = partial.openRead().use { it.readNBytes(16) }
+        val mime = received.mimeType.takeUnless { it == "application/octet-stream" || it.isBlank() } ?: MediaSniffer.sniff(head) ?: received.mimeType
+        val named = MediaSniffer.withExtension(rawName, mime)
+        val entry = received.copy(name = named, mimeType = mime)
+        val batch = req.header("x-airbox-batch")?.take(64)?.ifBlank { null }?.let { "${device.id}:$it" }
+        val transfer = PendingTransfer(id, device.id, device.name, FileNames.sanitize(named), size, entry.mimeType, batch)
+        val p = PendingEntry(transfer, entry, partial, storageId, clock() + PENDING_MS)
+        pending[id] = p
+        if (device.autoAccept || (batch != null && batch in acceptedBatches)) {
+            save(p)
+        } else {
+            onIncoming(transfer)
+            publish("incoming", json.parseToJsonElement(json.encodeToString(TransferStatus(id, "pending"))))
+        }
+        return transferStatus(id).let { if (pending.containsKey(id)) HttpResponse(202, it.headers, it.body) else it }
     }
 
     private fun download(id: String): HttpResponse {
@@ -361,9 +521,41 @@ class WebBridge(
     companion object {
         const val MAX_TEXT = 256 * 1024
         const val MAX_EVENTS = 200
-        const val SESSION_MS = 12 * 60 * 60_000L
+        const val COOKIE = "airbox_device"
+        /** A paired browser stays paired for a year (or until forgotten on Android). */
+        const val REMEMBER_SECONDS = 365L * 24 * 60 * 60
+        const val PENDING_MS = 10 * 60_000L
+        const val MAX_CLIPBOARD_IMAGE = 50L * 1024 * 1024
         const val MAX_FAILURES = 10
         const val LOCKOUT_WINDOW_MS = 5 * 60_000L
+    }
+}
+
+/** Recognises common photo and video formats from their first bytes. */
+object MediaSniffer {
+    fun sniff(head: ByteArray): String? {
+        fun at(offset: Int, vararg bytes: Int) = head.size >= offset + bytes.size && bytes.indices.all { (head[offset + it].toInt() and 0xff) == bytes[it] }
+        fun ascii(offset: Int, text: String) = head.size >= offset + text.length && String(head, offset, text.length, Charsets.ISO_8859_1) == text
+        return when {
+            at(0, 0xFF, 0xD8, 0xFF) -> "image/jpeg"
+            at(0, 0x89, 0x50, 0x4E, 0x47) -> "image/png"
+            ascii(0, "GIF8") -> "image/gif"
+            ascii(0, "RIFF") && ascii(8, "WEBP") -> "image/webp"
+            ascii(4, "ftyp") && (ascii(8, "heic") || ascii(8, "heix") || ascii(8, "mif1") || ascii(8, "msf1") || ascii(8, "hevc")) -> "image/heic"
+            ascii(4, "ftyp") && ascii(8, "qt  ") -> "video/quicktime"
+            ascii(4, "ftyp") -> "video/mp4"
+            ascii(0, "%PDF") -> "application/pdf"
+            else -> null
+        }
+    }
+
+    fun withExtension(name: String, mime: String): String {
+        if (name.substringAfterLast('/').contains('.')) return name
+        val ext = when (mime) {
+            "image/jpeg" -> "jpg"; "image/png" -> "png"; "image/gif" -> "gif"; "image/webp" -> "webp"; "image/heic" -> "heic"
+            "video/quicktime" -> "mov"; "video/mp4" -> "mp4"; "application/pdf" -> "pdf"; else -> return name
+        }
+        return "$name.$ext"
     }
 }
 

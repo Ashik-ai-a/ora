@@ -71,6 +71,24 @@
     </div>
   </section>
 
+  <section class="setup" aria-labelledby="setupTitle">
+    <h2 id="setupTitle">Share from any app</h2>
+    <div class="group">
+      <p class="empty">Add <b>Send to <span class="peerName">Android</span></b> to the iPhone Share sheet, and copy-paste with a double-tap on the back of the iPhone. You only do this once.</p>
+      <button id="makeKey" class="pill wide" type="button">Set up one-tap sharing</button>
+      <div id="keyBox" hidden>
+        <ol class="steps">
+          <li>Open <b>Shortcuts</b> → <b>+</b>. Add <b>Get Contents of URL</b>.</li>
+          <li>URL: <code id="uploadUrl"></code> <button class="pill small" data-copy="uploadUrl" type="button">Copy</button></li>
+          <li>Method <b>POST</b>. Header <b>Authorization</b> = <code id="authValue"></code> <button class="pill small" data-copy="authValue" type="button">Copy</button></li>
+          <li>Request Body: <b>File</b> → <b>Shortcut Input</b>. Wrap it in <b>Repeat with Each</b> for several photos.</li>
+          <li>Tap ⓘ → turn on <b>Show in Share Sheet</b>. Name it <b>Send to <span class="peerName">Android</span></b>.</li>
+          <li>For copy-paste, make a second shortcut: <b>Get Clipboard</b> → <b>Get Contents of URL</b> to <code id="clipUrl"></code> <button class="pill small" data-copy="clipUrl" type="button">Copy</button> with the same header, then Settings → Accessibility → Touch → <b>Back Tap</b> → Double Tap → that shortcut.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
   <p class="foot">Sent straight over your Wi-Fi. Nothing goes through the internet.</p>
 </main>
 <script src="/app.js"></script>

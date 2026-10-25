@@ -82,7 +82,11 @@ private fun Home() {
     val c = LocalAirboxColors.current
     val state by AirboxState.flow.collectAsStateWithLifecycle()
     var phase by remember { mutableStateOf<SendPhase>(SendPhase.Idle) }
+    var pairingAnother by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // A newly paired phone closes the "pair another" QR card.
+    LaunchedEffect(state.paired.size) { pairingAnother = false }
+
 
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val nearby = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -98,6 +102,23 @@ private fun Home() {
         phase = SendPhase.Done(label)
         delay(2400)
         phase = SendPhase.Idle
+    }
+
+    state.prompts.firstOrNull()?.let { prompt ->
+        IncomingPromptDialog(
+            prompt,
+            onAccept = { always ->
+                AirboxService.start(context, if (always) AirboxService.ACTION_ACCEPT_ALWAYS else AirboxService.ACTION_ACCEPT) {
+                    putExtra(AirboxService.EXTRA_TRANSFER, prompt.firstTransferId); putExtra(AirboxService.EXTRA_PROMPT, prompt.promptId)
+                }
+                shared(if (prompt.names.size == 1) "Saved to Photos" else "${prompt.names.size} saved to Photos")
+            },
+            onDecline = {
+                AirboxService.start(context, AirboxService.ACTION_DECLINE) {
+                    putExtra(AirboxService.EXTRA_TRANSFER, prompt.firstTransferId); putExtra(AirboxService.EXTRA_PROMPT, prompt.promptId)
+                }
+            },
+        )
     }
 
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
@@ -152,7 +173,16 @@ private fun Home() {
             }
         }
 
-        item { ConnectCard(state, onNewCode = { AirboxService.start(context, AirboxService.ACTION_NEW_PAIRING) },
+        // Paired once = never scan again. The QR code only comes back to add another iPhone.
+        if (state.paired.isNotEmpty() && !pairingAnother) item {
+            PairedCard(
+                state.paired,
+                onAutoAccept = { d, on -> AirboxService.start(context, AirboxService.ACTION_AUTO_ACCEPT) {
+                    putExtra(AirboxService.EXTRA_DEVICE, d.id); putExtra(AirboxService.EXTRA_ENABLED, on) } },
+                onForget = { d -> AirboxService.start(context, AirboxService.ACTION_FORGET) { putExtra(AirboxService.EXTRA_DEVICE, d.id) } },
+                onPairAnother = { pairingAnother = true; AirboxService.start(context, AirboxService.ACTION_NEW_PAIRING) },
+            )
+        } else item { ConnectCard(state, onNewCode = { AirboxService.start(context, AirboxService.ACTION_NEW_PAIRING) },
             onHotspot = { on ->
                 when {
                     !on -> AirboxService.start(context, AirboxService.ACTION_STOP_HOTSPOT)
