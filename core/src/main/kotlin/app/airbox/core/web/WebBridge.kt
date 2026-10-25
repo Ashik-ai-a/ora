@@ -51,6 +51,11 @@ class WebBridge(
     private val pairedStore: PairedDeviceStore = InMemoryPairedDeviceStore(),
     /** A button pressed on the iPhone (Dynamic Island / app): e.g. STOP_RING, DECLINE_CALL. */
     private val onAction: (IslandAction, String?) -> Unit = { _, _ -> },
+    /**
+     * A Shortcut reached this phone but something was wrong (sent nothing, old key). Shortcuts
+     * hides server replies, so Android shows this instead of failing silently.
+     */
+    private val onProblem: (String) -> Unit = { },
     port: Int = 0,
     bindAddress: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -260,9 +265,8 @@ class WebBridge(
                 val request = MiniHttp.parse(s.getInputStream(), remote)
                 handle(request).also {
                     // Drain small leftovers so the client sees our response, not a reset.
-                    if (!(request.body as LimitedInputStream).exhausted && request.contentLength < 64 * 1024) {
-                        request.body.readAllBytes()
-                    }
+                    val body = request.body
+                    if (body is LimitedInputStream && !body.exhausted && request.contentLength < 64 * 1024) body.readAllBytes()
                 }
             } catch (e: HttpError) {
                 HttpResponse.text(e.status, e.message ?: "")
@@ -286,12 +290,16 @@ class WebBridge(
         }
 
         if (req.method == "GET" && req.path == "/" && req.query["t"] != null) return redeemVisit(req)
+        if (req.method == "GET" && req.path == "/" && req.query["k"] != null) return homeScreenVisit(req)
         if (req.method == "POST" && req.path == "/api/app-pair") return pairApp(req)
 
         val device = deviceFor(req)
         if (device == null) {
             if (req.cookies[COOKIE] != null || req.header("authorization") != null || req.query["t"] != null) {
                 recordFailure(req.remoteAddress)
+            }
+            if (req.header("authorization") != null && req.path.startsWith("/api/")) {
+                onProblem("A Shortcut on your iPhone uses an old key. Open Airbox in Safari and set up one-tap sharing again.")
             }
             return if (req.path == "/") page("signed-out.html") else HttpResponse.text(401, "Scan the QR code on the Android phone again.")
         }
@@ -307,6 +315,10 @@ class WebBridge(
             req.method == "GET" && req.path == "/api/info" -> HttpResponse.json(json.encodeToString(mapOf("deviceName" to deviceName)))
             req.method == "POST" && req.path == "/api/text" -> receiveText(req)
             req.method == "POST" && req.path == "/api/clipboard" -> receiveClipboard(req)
+            // Home Screen icon: a link that carries its own key, because a Home Screen web app
+            // doesn't share Safari's cookies.
+            req.method == "POST" && req.path == "/api/home-key" ->
+                HttpResponse.json(json.encodeToString(mapOf("key" to createShortcutKey("${device.name} · Home Screen"))))
             req.method == "POST" && req.path == "/api/shortcut-key" -> {
                 val key = createShortcutKey("${device.name} · Shortcuts")
                 HttpResponse.json(json.encodeToString(mapOf("key" to key, "deviceName" to deviceName,
@@ -371,6 +383,20 @@ class WebBridge(
         return HttpResponse.json(json.encodeToString(AppPairing(createShortcutKey(name), deviceName)))
     }
 
+    /** Opening the Home Screen icon: /?k=KEY signs in with that key and refreshes the cookie. */
+    private fun homeScreenVisit(req: HttpRequest): HttpResponse {
+        val key = req.query.getValue("k")
+        val hash = PairedDevice.hash(key)
+        if (paired.keys.none { constantTimeEquals(it, hash) }) {
+            recordFailure(req.remoteAddress)
+            return page("signed-out.html", 401)
+        }
+        // No redirect: the address must keep the key so "Add to Home Screen" saves it.
+        return page("index.html").apply {
+            headers["Set-Cookie"] = "$COOKIE=$key; Path=/; HttpOnly; SameSite=Strict; Max-Age=$REMEMBER_SECONDS"
+        }
+    }
+
     /** The paired phone behind a request: browser cookie or Bearer key (Shortcuts, the app). */
     private fun deviceFor(req: HttpRequest): PairedDevice? {
         val key = req.header("authorization")?.removePrefix("Bearer ")?.trim() ?: req.cookies[COOKIE] ?: return null
@@ -405,12 +431,14 @@ class WebBridge(
         if (!type.startsWith("image/")) return receiveText(req)
         if (req.contentLength > MAX_CLIPBOARD_IMAGE) throw HttpError(413, "Image too large for the clipboard")
         val ext = when (type) { "image/png" -> "png"; "image/heic" -> "heic"; "image/gif" -> "gif"; "image/webp" -> "webp"; else -> "jpg" }
-        val entry = FileEntry(0, "Clipboard.$ext", req.contentLength, type, clock())
+        val declared = FileEntry(0, "Clipboard.$ext", maxOf(req.contentLength, 0), type, clock())
         val storageId = "clip-" + randomBytes(9).toBase64Url()
-        val partial = storage.partial(storageId, entry)
+        val partial = storage.partial(storageId, declared)
         try {
-            partial.openAppend().use { out -> req.body.copyTo(out, 64 * 1024) }
-            if (partial.length != req.contentLength) throw HttpError(400, "Upload interrupted")
+            partial.openAppend().use { out -> copyCapped(req.body, out, MAX_CLIPBOARD_IMAGE) }
+            if (req.contentLength >= 0 && partial.length != req.contentLength) throw HttpError(400, "Upload interrupted")
+            if (partial.length == 0L) { problemIfShortcut(req); throw HttpError(400, "Nothing to send") }
+            val entry = declared.copy(size = partial.length)
             val saved = storage.publish(partial, entry.name, entry)
             onClipboardImage(entry, saved)
             return HttpResponse.json(json.encodeToString(mapOf("savedAs" to saved)))
@@ -420,10 +448,56 @@ class WebBridge(
     }
 
     private fun receiveText(req: HttpRequest): HttpResponse {
-        val text = req.readBodyText(MAX_TEXT).trimEnd('\n')
-        if (text.isEmpty()) return HttpResponse.text(400, "Nothing to send")
+        val text = textFrom(req).trimEnd('\n')
+        if (text.isBlank()) {
+            problemIfShortcut(req)
+            return HttpResponse.text(400, "Nothing to send. In the Shortcut, set Request Body to File and choose Clipboard.")
+        }
         onText(text)
-        return HttpResponse.empty()
+        return HttpResponse.text(200, "Sent to $deviceName")
+    }
+
+    /**
+     * Plain text, or whatever Shortcuts makes of it: a Form (text=...) or JSON body is
+     * accepted too, so a Shortcut set up slightly differently still works.
+     */
+    private fun textFrom(req: HttpRequest): String {
+        val raw = req.readBodyText(MAX_TEXT)
+        val type = req.header("content-type")?.substringBefore(';')?.trim()?.lowercase()
+        return when (type) {
+            "application/x-www-form-urlencoded" -> raw.split('&').mapNotNull {
+                val (k, v) = (it.split('=', limit = 2) + "").take(2)
+                runCatching { java.net.URLDecoder.decode(k, Charsets.UTF_8) to java.net.URLDecoder.decode(v, Charsets.UTF_8) }.getOrNull()
+            }.let { fields -> fields.firstOrNull { it.first == "text" }?.second ?: fields.firstOrNull()?.second ?: "" }
+            "application/json" -> runCatching {
+                when (val e = json.parseToJsonElement(raw)) {
+                    is kotlinx.serialization.json.JsonObject -> (e["text"] ?: e.values.firstOrNull { it is kotlinx.serialization.json.JsonPrimitive })
+                        ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                    is kotlinx.serialization.json.JsonPrimitive -> e.content
+                    else -> null
+                }
+            }.getOrNull() ?: raw
+            else -> raw
+        }
+    }
+
+    private fun problemIfShortcut(req: HttpRequest) {
+        if (req.header("authorization") != null) {
+            onProblem("Your Shortcut reached this phone but sent nothing. In the Shortcut, tap Show More on Get Contents of URL and set Request Body to File \u2192 Clipboard.")
+        }
+    }
+
+    /** Copies at most [max] bytes; more than that is refused. */
+    private fun copyCapped(input: java.io.InputStream, out: java.io.OutputStream, max: Long) {
+        val buf = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) return
+            total += n
+            if (total > max) throw HttpError(413, "File too large")
+            out.write(buf, 0, n)
+        }
     }
 
     /**
@@ -433,21 +507,29 @@ class WebBridge(
      */
     private fun receiveFile(req: HttpRequest, device: PairedDevice): HttpResponse {
         val rawName = req.query["name"]?.takeIf { it.isNotBlank() } ?: throw HttpError(400, "Missing name")
-        val size = req.contentLength
-        if (size > maxUploadBytes) throw HttpError(413, "File too large")
-        if (storage.freeBytes() - storageReserveBytes < size) throw HttpError(507, "Not enough space on the Android phone")
-        val received = FileEntry(0, rawName, size, req.header("content-type")?.substringBefore(';')?.trim() ?: "application/octet-stream", null)
+        val declaredSize = req.contentLength
+        if (declaredSize > maxUploadBytes) throw HttpError(413, "File too large")
+        if (storage.freeBytes() - storageReserveBytes < maxOf(declaredSize, 0)) throw HttpError(507, "Not enough space on the Android phone")
+        val declared = FileEntry(0, rawName, maxOf(declaredSize, 0), req.header("content-type")?.substringBefore(';')?.trim() ?: "application/octet-stream", null)
         val id = randomBytes(9).toBase64Url()
         val storageId = "web-$id"
-        val partial = storage.partial(storageId, received)
+        val partial = storage.partial(storageId, declared)
         try {
-            partial.openAppend().use { out -> req.body.copyTo(out, 64 * 1024) }
+            val room = minOf(maxUploadBytes, storage.freeBytes() - storageReserveBytes)
+            partial.openAppend().use { out -> copyCapped(req.body, out, room) }
         } catch (e: Exception) {
             storage.discard(storageId)
             throw e
         }
         // Browser uploads carry no checksum over HTTP; at least never keep a truncated file.
-        if (partial.length != size) { storage.discard(storageId); throw HttpError(400, "Upload interrupted") }
+        if (declaredSize >= 0 && partial.length != declaredSize) { storage.discard(storageId); throw HttpError(400, "Upload interrupted") }
+        if (partial.length == 0L) {
+            storage.discard(storageId)
+            problemIfShortcut(req)
+            throw HttpError(400, "Nothing to send. In the Shortcut, set Request Body to File and choose Shortcut Input.")
+        }
+        val size = partial.length
+        val received = declared.copy(size = size)
         // Shortcuts often sends "Photo" as application/octet-stream: look at the bytes so the
         // Gallery recognises photos and videos, and give the file its proper extension.
         val head = partial.openRead().use { it.readNBytes(16) }

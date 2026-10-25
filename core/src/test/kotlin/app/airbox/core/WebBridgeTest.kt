@@ -30,12 +30,13 @@ class WebBridgeTest {
     private val actions = LinkedBlockingQueue<Pair<app.airbox.core.live.IslandAction, String?>>()
     private val incoming = LinkedBlockingQueue<WebBridge.PendingTransfer>()
     private val clipImages = LinkedBlockingQueue<String>()
+    private val problems = LinkedBlockingQueue<String>()
     private val store = app.airbox.core.web.FilePairedDeviceStore(tmp.resolve("paired.json"))
     private var storage: ReceiveStorage = DirectoryReceiveStorage(out)
     private val bridge = WebBridge(object : ReceiveStorage by DirectoryReceiveStorage(out) {
         override fun freeBytes() = storage.freeBytes()
     }, "Pixel 9", onText = { texts += it }, onAction = { a, t -> actions += a to t },
-        onIncoming = { incoming += it }, onClipboardImage = { _, saved -> clipImages += saved }, pairedStore = store, bindAddress = "127.0.0.1").start()
+        onIncoming = { incoming += it }, onClipboardImage = { _, saved -> clipImages += saved }, pairedStore = store, onProblem = { problems += it }, bindAddress = "127.0.0.1").start()
     private val http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build()
     private val base get() = "http://127.0.0.1:${bridge.port}"
 
@@ -68,7 +69,7 @@ class WebBridgeTest {
     @Test fun iphoneCopiesTextAndAndroidReceivesIt() {
         val cookie = scanQr()
         assertEquals(200, get("/", cookie).statusCode())
-        assertEquals(204, post("/api/text", "Meet at Gate 22 ✈️".toByteArray(), cookie).statusCode())
+        assertEquals(200, post("/api/text", "Meet at Gate 22 ✈️".toByteArray(), cookie).statusCode())
         assertEquals("Meet at Gate 22 ✈️", texts.poll(2, TimeUnit.SECONDS))
     }
 
@@ -100,7 +101,7 @@ class WebBridgeTest {
 
     @Test fun shortcutKeySendsClipboardAndCanBeRevoked() {
         val key = bridge.createShortcutKey("Ana's iPhone")
-        assertEquals(204, post("/api/text", "from Back Tap".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(200, post("/api/text", "from Back Tap".toByteArray(), csrf = false, auth = key).statusCode())
         assertEquals("from Back Tap", texts.poll(2, TimeUnit.SECONDS))
         bridge.revokeShortcutKey(key)
         assertEquals(401, post("/api/text", "again".toByteArray(), csrf = false, auth = key).statusCode())
@@ -181,7 +182,7 @@ class WebBridgeTest {
         assertEquals(200, r.statusCode())
         val key = Regex("\"key\":\"([^\"]+)\"").find(r.body())!!.groupValues[1]
         assertTrue("\"deviceName\":\"Pixel 9\"" in r.body())
-        assertEquals(204, post("/api/text", "pasted in app".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(200, post("/api/text", "pasted in app".toByteArray(), csrf = false, auth = key).statusCode())
         assertEquals("pasted in app", texts.poll(2, TimeUnit.SECONDS))
         assertEquals(401, pairApp("t=used").statusCode())
     }
@@ -224,7 +225,7 @@ class WebBridgeTest {
         try {
             val r = http.send(HttpRequest.newBuilder(URI("http://127.0.0.1:${again.port}/api/text")).header("Cookie", cookie)
                 .header("X-Airbox", "1").POST(HttpRequest.BodyPublishers.ofString("still paired")).build(), HttpResponse.BodyHandlers.ofString())
-            assertEquals(204, r.statusCode())
+            assertEquals(200, r.statusCode())
             assertEquals("still paired", texts.poll(2, TimeUnit.SECONDS))
         } finally { again.close() }
         // Only a hash of the key is stored on disk.
@@ -276,7 +277,7 @@ class WebBridgeTest {
         assertEquals(200, r.statusCode())
         val saved = clipImages.poll(2, TimeUnit.SECONDS)!!
         assertContentEquals(png, out.resolve(saved).readBytes())
-        assertEquals(204, post("/api/clipboard", "plain text".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(200, post("/api/clipboard", "plain text".toByteArray(), csrf = false, auth = key).statusCode())
         assertEquals("plain text", texts.poll(2, TimeUnit.SECONDS))
     }
 
@@ -295,9 +296,60 @@ class WebBridgeTest {
         val cookie = scanQr()
         val r = post("/api/shortcut-key", ByteArray(0), cookie)
         val key = Regex("\"key\":\"([^\"]+)\"").find(r.body())!!.groupValues[1]
-        assertEquals(204, post("/api/clipboard", "via shortcut".toByteArray(), csrf = false, auth = key).statusCode())
+        assertEquals(200, post("/api/clipboard", "via shortcut".toByteArray(), csrf = false, auth = key).statusCode())
         assertEquals("via shortcut", texts.poll(2, TimeUnit.SECONDS))
         assertEquals(2, bridge.pairedDevices().size)
+    }
+
+    /** Raw request over a socket, so the body can be chunked the way iOS Shortcuts may send it. */
+    private fun rawPost(path: String, key: String, contentType: String, chunks: List<String>): String =
+        java.net.Socket("127.0.0.1", bridge.port).use { sock ->
+            val body = chunks.joinToString("") { "${Integer.toHexString(it.toByteArray().size)}\r\n$it\r\n" } + "0\r\n\r\n"
+            sock.getOutputStream().write(("POST $path HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer $key\r\n" +
+                "Content-Type: $contentType\r\nTransfer-Encoding: chunked\r\n\r\n$body").toByteArray())
+            sock.getInputStream().bufferedReader().readLine()
+        }
+
+    @Test fun chunkedShortcutRequestsWork() {
+        val key = bridge.createShortcutKey("Back Tap")
+        assertEquals("HTTP/1.1 200 OK", rawPost("/api/clipboard", key, "text/plain", listOf("copied ", "on iPhone")))
+        assertEquals("copied on iPhone", texts.poll(2, TimeUnit.SECONDS))
+        // Two chunks, 6 + 3 bytes ("\u00ff" is two bytes in UTF-8).
+        assertEquals("HTTP/1.1 202 Accepted", rawPost("/api/upload?name=Photo", key, "image/jpeg", listOf("\u00ff".repeat(3), "abc")))
+        assertEquals(9L, incoming.poll(2, TimeUnit.SECONDS)!!.size)
+    }
+
+    @Test fun emptyShortcutTellsAndroidWhatIsWrong() {
+        val key = bridge.createShortcutKey("Back Tap")
+        val r = post("/api/clipboard", ByteArray(0), csrf = false, auth = key)
+        assertEquals(400, r.statusCode())
+        assertTrue("Request Body" in r.body())
+        assertTrue("Request Body" in problems.poll(2, TimeUnit.SECONDS)!!)
+        // An old key is reported too, instead of silently doing nothing.
+        post("/api/clipboard", "x".toByteArray(), csrf = false, auth = "revoked-key")
+        assertTrue("old key" in problems.poll(2, TimeUnit.SECONDS)!!)
+        assertTrue(texts.isEmpty())
+    }
+
+    @Test fun shortcutFormAndJsonBodiesAreUnderstood() {
+        val key = bridge.createShortcutKey("Back Tap")
+        post("/api/clipboard", "text=Hello%20there".toByteArray(), csrf = false, auth = key,
+            headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"))
+        assertEquals("Hello there", texts.poll(2, TimeUnit.SECONDS))
+        post("/api/clipboard", """{"text":"from json"}""".toByteArray(), csrf = false, auth = key, headers = mapOf("Content-Type" to "application/json"))
+        assertEquals("from json", texts.poll(2, TimeUnit.SECONDS))
+    }
+
+    @Test fun homeScreenLinkKeepsTheIphoneSignedIn() {
+        val cookie = scanQr()
+        val key = Regex("\"key\":\"([^\"]+)\"").find(post("/api/home-key", ByteArray(0), cookie).body())!!.groupValues[1]
+        // Opening the icon later, with no cookie at all (a Home Screen app has its own storage):
+        val r = http.send(HttpRequest.newBuilder(URI("$base/?k=$key")).GET().build(), HttpResponse.BodyHandlers.ofString())
+        assertEquals(200, r.statusCode())
+        assertTrue("Scan the code again" !in r.body())
+        val newCookie = r.headers().firstValue("Set-Cookie").get().substringBefore(';')
+        assertEquals(200, post("/api/text", "from the icon".toByteArray(), newCookie).statusCode())
+        assertEquals(401, http.send(HttpRequest.newBuilder(URI("$base/?k=wrong")).GET().build(), HttpResponse.BodyHandlers.discarding()).statusCode())
     }
 
     @Test fun wifiQrEscapesSpecialCharacters() {

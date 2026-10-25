@@ -26,7 +26,11 @@ data class AirboxUiState(
     val prompts: List<IncomingPrompt> = emptyList(),
     /** Phones that paired once and never need to scan again. */
     val paired: List<PairedDevice> = emptyList(),
+    /** Text sent either way, oldest first, like a chat. */
+    val messages: List<TextMessage> = emptyList(),
 )
+
+data class TextMessage(val text: String, val incoming: Boolean, val atEpochMs: Long)
 
 data class IncomingPrompt(
     val promptId: String,
@@ -67,9 +71,11 @@ data class RecentTransfer(
 
 object AirboxState {
     private const val MAX_RECENT = 200
+    private const val MAX_MESSAGES = 100
     private val state = MutableStateFlow(AirboxUiState())
     val flow: StateFlow<AirboxUiState> = state.asStateFlow()
     @Volatile private var recentFile: File? = null
+    @Volatile private var messageFile: File? = null
 
     fun update(change: (AirboxUiState) -> AirboxUiState) = state.update(change)
 
@@ -104,6 +110,43 @@ object AirboxState {
         save()
     }
 
+    fun addMessage(message: TextMessage) {
+        state.update { s -> s.copy(messages = (s.messages + message).takeLast(MAX_MESSAGES)) }
+        saveMessages()
+    }
+
+    fun clearMessages() {
+        state.update { it.copy(messages = emptyList()) }
+        saveMessages()
+    }
+
+    fun attachMessageStore(file: File) {
+        messageFile = file
+        val loaded = runCatching {
+            val array = JSONArray(file.readText())
+            (0 until array.length()).map { i ->
+                val o = array.getJSONObject(i)
+                TextMessage(o.getString("text"), o.getBoolean("incoming"), o.getLong("at"))
+            }
+        }.getOrDefault(emptyList())
+        state.update { s -> s.copy(messages = (loaded + s.messages).distinct().sortedBy { it.atEpochMs }.takeLast(MAX_MESSAGES)) }
+    }
+
+    private fun saveMessages() {
+        val file = messageFile ?: return
+        val array = JSONArray()
+        state.value.messages.forEach { m -> array.put(JSONObject().put("text", m.text).put("incoming", m.incoming).put("at", m.atEpochMs)) }
+        writeAtomically(file, array.toString())
+    }
+
+    private fun writeAtomically(file: File, text: String) {
+        runCatching {
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(text)
+            tmp.renameTo(file)
+        }
+    }
+
     /** Loads the history saved by earlier runs. Call once when the service starts. */
     fun attachRecentStore(file: File) {
         recentFile = file
@@ -125,10 +168,6 @@ object AirboxState {
             array.put(JSONObject().put("name", r.name).put("incoming", r.incoming).put("size", r.sizeBytes).put("at", r.atEpochMs)
                 .put("uri", r.uri ?: ""))
         }
-        runCatching {
-            val tmp = File(file.parentFile, file.name + ".tmp")
-            tmp.writeText(array.toString())
-            tmp.renameTo(file)
-        }
+        writeAtomically(file, array.toString())
     }
 }

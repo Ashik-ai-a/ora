@@ -31,9 +31,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -67,6 +69,7 @@ import app.airbox.android.platform.Clipboard
 import app.airbox.android.platform.DeviceCompat
 import app.airbox.android.platform.Qr
 import app.airbox.android.platform.RecentTransfer
+import app.airbox.android.platform.TextMessage
 import app.airbox.android.platform.TimeLabel
 import app.airbox.android.platform.UriOutgoingFile
 import kotlinx.coroutines.delay
@@ -179,6 +182,17 @@ private fun Home() {
             }
         }
 
+        item {
+            MessagesCard(
+                state.messages,
+                onSend = { text ->
+                    AirboxService.start(context, AirboxService.ACTION_SHARE_TEXT) { putExtra(AirboxService.EXTRA_TEXT, text) }
+                    shared("Ready on iPhone")
+                },
+                onClear = { AirboxState.clearMessages() },
+            )
+        }
+
         // Paired once = never scan again. The QR code only comes back to add another iPhone.
         if (state.paired.isNotEmpty() && !pairingAnother) item {
             PairedCard(
@@ -252,6 +266,79 @@ private fun ConnectCard(state: AirboxUiState, onNewCode: () -> Unit, onHotspot: 
                 colors = SwitchDefaults.colors(checkedTrackColor = c.green))
         }
         Text("New code", style = AirboxType.subhead, color = c.blue, modifier = Modifier.padding(top = 12.dp).clickable(onClick = onNewCode))
+    }
+}
+
+/**
+ * Text both ways, like iMessage: iPhone on the left in grey, this phone on the right in
+ * blue. Tap a bubble to copy it. The iPhone sees what you send in Airbox (Safari or app).
+ */
+@Composable
+private fun MessagesCard(messages: List<TextMessage>, onSend: (String) -> Unit, onClear: () -> Unit) {
+    val c = LocalAirboxColors.current
+    val context = LocalContext.current
+    var draft by remember { mutableStateOf("") }
+    var showAll by remember { mutableStateOf(false) }
+    Column {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Messages", style = AirboxType.title3, color = c.label, modifier = Modifier.weight(1f))
+            if (messages.isNotEmpty()) Text("Clear", style = AirboxType.subhead, color = c.blue, modifier = Modifier.clickable(onClick = onClear))
+        }
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.surface).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (messages.isEmpty()) {
+                Text("Type below to send text to your iPhone. Text you send from the iPhone shows up here too, and is already on this phone’s clipboard.",
+                    style = AirboxType.subhead, color = c.label2, modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp))
+            }
+            val shown = if (showAll) messages else messages.takeLast(8)
+            if (!showAll && messages.size > shown.size) {
+                Text("Show earlier", style = AirboxType.footnote, color = c.blue,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).clickable { showAll = true }.padding(4.dp))
+            }
+            shown.forEach { m ->
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = if (m.incoming) Alignment.Start else Alignment.End) {
+                    Text(
+                        m.text, style = AirboxType.body, maxLines = 12,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = if (m.incoming) c.label else androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f).wrapContentWidth(if (m.incoming) Alignment.Start else Alignment.End)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (m.incoming) c.surface2 else c.blue)
+                            .clickable {
+                                app.airbox.android.platform.Clipboard.put(context, m.text)
+                                android.widget.Toast.makeText(context, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                    Text("${if (m.incoming) "iPhone" else "You"} · ${TimeLabel.of(m.atEpochMs)}", style = AirboxType.caption, color = c.label2,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(c.surface2).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    if (draft.isEmpty()) Text("Message iPhone", style = AirboxType.body, color = c.label3)
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = draft, onValueChange = { draft = it.take(256 * 1024) },
+                        textStyle = AirboxType.body.copy(color = c.label), maxLines = 6,
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(c.blue),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                val canSend = draft.isNotBlank()
+                Box(
+                    Modifier.padding(start = 8.dp, bottom = 3.dp).size(36.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (canSend) c.blue else c.surface2)
+                        .clickable(enabled = canSend) { onSend(draft.trimEnd()); draft = "" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.ArrowUpward, contentDescription = "Send",
+                        tint = if (canSend) androidx.compose.ui.graphics.Color.White else c.label3, modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

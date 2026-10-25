@@ -85,6 +85,19 @@ object Notifications {
                 .build())
     }
 
+    /** A Shortcut reached the phone but failed; Shortcuts itself would show nothing. */
+    fun problem(context: Context, message: String) {
+        notify(context, ID_RECEIVED_BASE + 512,
+            builder(context, CHANNEL_RECEIVED)
+                .setContentTitle("Shortcut needs a fix")
+                .setContentText(message)
+                .setStyle(Notification.BigTextStyle().bigText(message))
+                .setAutoCancel(true)
+                .setContentIntent(openApp(context))
+                .setCategory(Notification.CATEGORY_ERROR)
+                .build())
+    }
+
     fun fileReceived(context: Context, name: String, open: PendingIntent?) {
         notify(context, ID_RECEIVED_BASE + (name.hashCode() and 0xff) + 256,
             builder(context, CHANNEL_RECEIVED)

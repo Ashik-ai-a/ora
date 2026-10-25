@@ -156,6 +156,10 @@ button, label.action { font: inherit; color: inherit; }
 .steps li { margin: 0 0 10px; }
 .steps code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8125rem; background: var(--surface-2);
   border-radius: 6px; padding: 2px 6px; word-break: break-all; }
+#keyBox h3 { font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.015em; margin: 4px 0 8px; }
+.steps .key-step { background: color-mix(in srgb, var(--blue) 10%, transparent); border-radius: 8px; padding: 4px 8px; margin-left: -8px; }
+.note { color: var(--label-2); font-size: 0.8125rem; line-height: 1.4; margin: 0 0 16px; }
+.inline-share { width: 14px; height: 16px; vertical-align: -2px; fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .radar.waiting .ring-fill { stroke: var(--label-3); }
 .foot { color: var(--label-2); font-size: 0.8125rem; line-height: 1.38; letter-spacing: -0.006em; text-align: center; margin: 28px 12px 0; }
 

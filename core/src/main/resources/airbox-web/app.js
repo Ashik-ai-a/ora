@@ -371,6 +371,19 @@
       toast("Couldn’t reach " + peerName, true);
     }
   });
+  // ---- Home Screen icon: put a signed-in link in the address bar for "Add to Home Screen" ----
+  $("makeHome").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/home-key", { method: "POST" });
+      if (!r.ok) throw new Error();
+      const j = await r.json();
+      history.replaceState(null, "", "/?k=" + encodeURIComponent(j.key));
+      $("homeSteps").hidden = false;
+      $("makeHome").hidden = true;
+    } catch (e) {
+      toast("Couldn’t reach " + peerName, true);
+    }
+  });
   document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const node = $(b.getAttribute("data-copy"));
     const text = node.textContent;

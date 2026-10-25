@@ -35,6 +35,7 @@ class AirboxService : Service() {
     override fun onCreate() {
         super.onCreate()
         AirboxState.attachRecentStore(File(filesDir, "recent.json"))
+        AirboxState.attachMessageStore(File(filesDir, "messages.json"))
         Notifications.createChannels(this)
         goForeground(Net.localAddress(this))
         startBridge()
@@ -106,6 +107,7 @@ class AirboxService : Service() {
                 Clipboard.put(this, text)
                 Notifications.textReceived(this, text)
                 AirboxState.update { it.copy(lastText = text, iphoneSeen = true) }
+                AirboxState.addMessage(TextMessage(text, incoming = true, atEpochMs = System.currentTimeMillis()))
                 show(IslandEvent.ClipboardReceived(text))
             },
             pairedStore = FilePairedDeviceStore(File(filesDir, "paired.json").toPath()),
@@ -131,6 +133,7 @@ class AirboxService : Service() {
                 AirboxState.update { it.copy(iphoneSeen = true) }
             },
             onAction = { action, target -> handleAction(action, target) },
+            onProblem = { message -> Notifications.problem(this, message) },
         ).start()
         AirboxState.update { it.copy(running = true) }
         refreshPaired()
@@ -206,7 +209,7 @@ class AirboxService : Service() {
 
     private fun shareText(text: String) {
         bridge?.shareText(text)
-        AirboxState.addRecent(RecentTransfer("Text", incoming = false, sizeBytes = text.length.toLong(), atEpochMs = System.currentTimeMillis()))
+        AirboxState.addMessage(TextMessage(text, incoming = false, atEpochMs = System.currentTimeMillis()))
     }
 
     private fun shareFiles(files: List<OutgoingFile>) {

@@ -21,6 +21,7 @@ class HttpRequest(
     val remoteAddress: String,
     /** Exactly Content-Length bytes; reading past it returns -1. */
     val body: InputStream,
+    /** -1 for a chunked body (iOS Shortcuts can send one): length unknown until read. */
     val contentLength: Long,
 ) {
     fun header(name: String): String? = headers[name.lowercase()]
@@ -34,9 +35,9 @@ class HttpRequest(
 
     fun readBodyText(limit: Int): String {
         if (contentLength > limit) throw HttpError(413, "Too large")
-        val out = ByteArrayOutputStream()
-        body.copyTo(out)
-        return out.toString(Charsets.UTF_8)
+        val bytes = body.readNBytes(limit + 1)
+        if (bytes.size > limit) throw HttpError(413, "Too large")
+        return String(bytes, Charsets.UTF_8)
     }
 }
 
@@ -74,17 +75,25 @@ internal object MiniHttp {
             if (i <= 0) throw HttpError(400, "Bad header")
             it.substring(0, i).trim().lowercase() to it.substring(i + 1).trim()
         }
-        if (headers["transfer-encoding"] != null) throw HttpError(411, "Length required")
+        val encoding = headers["transfer-encoding"]?.lowercase()
+        if (encoding != null) {
+            if (encoding != "chunked") throw HttpError(501, "Unsupported transfer encoding")
+            val (path, query) = target(parts[1])
+            return HttpRequest(parts[0], path, query, headers, remote, ChunkedInputStream(inp), -1)
+        }
         val length = headers["content-length"]?.toLongOrNull()?.takeIf { it >= 0 }
             // Bodyless methods may omit Content-Length (Safari does for DELETE).
             ?: if (parts[0] in setOf("GET", "HEAD", "DELETE", "OPTIONS")) 0L else throw HttpError(411, "Length required")
-        val target = parts[1]
-        val path = target.substringBefore('?')
+        val (path, query) = target(parts[1])
+        return HttpRequest(parts[0], path, query, headers, remote, LimitedInputStream(inp, length), length)
+    }
+
+    private fun target(target: String): Pair<String, Map<String, String>> {
         val query = target.substringAfter('?', "").split('&').filter { '=' in it }.associate {
             val (k, v) = it.split('=', limit = 2)
             URLDecoder.decode(k, Charsets.UTF_8) to URLDecoder.decode(v, Charsets.UTF_8)
         }
-        return HttpRequest(parts[0], path, query, headers, remote, LimitedInputStream(inp, length), length)
+        return target.substringBefore('?') to query
     }
 
     private fun readHead(inp: InputStream): String {
@@ -127,9 +136,9 @@ internal object MiniHttp {
     }
 
     private fun reason(status: Int) = when (status) {
-        200 -> "OK"; 204 -> "No Content"; 303 -> "See Other"; 400 -> "Bad Request"; 401 -> "Unauthorized"
+        200 -> "OK"; 202 -> "Accepted"; 204 -> "No Content"; 303 -> "See Other"; 400 -> "Bad Request"; 401 -> "Unauthorized"
         403 -> "Forbidden"; 404 -> "Not Found"; 405 -> "Method Not Allowed"; 411 -> "Length Required"
-        413 -> "Payload Too Large"; 429 -> "Too Many Requests"; 431 -> "Request Header Fields Too Large"
+        413 -> "Payload Too Large"; 501 -> "Not Implemented"; 429 -> "Too Many Requests"; 431 -> "Request Header Fields Too Large"
         507 -> "Insufficient Storage"; else -> "Error"
     }
 }
@@ -149,4 +158,55 @@ internal class LimitedInputStream(private val inner: InputStream, private var re
     }
 
     val exhausted get() = remaining == 0L
+}
+
+/** Decodes a chunked request body (RFC 9112 \u00a77.1); trailers are read and ignored. */
+internal class ChunkedInputStream(private val inner: InputStream) : InputStream() {
+    private var left = 0L
+    private var done = false
+    var exhausted = false
+        private set
+
+    private fun line(): String {
+        val sb = StringBuilder()
+        while (true) {
+            val b = inner.read()
+            if (b < 0) throw IOException("closed inside chunked body")
+            if (b == '\n'.code) return sb.toString().trimEnd('\r')
+            if (sb.length > 1024) throw HttpError(400, "Bad chunk")
+            sb.append(b.toChar())
+        }
+    }
+
+    private fun next(): Boolean {
+        if (done) return false
+        if (left == 0L) {
+            val size = line().substringBefore(';').trim().toLongOrNull(16) ?: throw HttpError(400, "Bad chunk")
+            if (size == 0L) {
+                while (line().isNotEmpty()) Unit // trailers
+                done = true; exhausted = true
+                return false
+            }
+            left = size
+        }
+        return true
+    }
+
+    override fun read(): Int {
+        if (!next()) return -1
+        val b = inner.read()
+        if (b < 0) throw IOException("closed inside chunk")
+        if (--left == 0L) line()
+        return b
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (len == 0) return 0
+        if (!next()) return -1
+        val n = inner.read(b, off, minOf(len.toLong(), left).toInt())
+        if (n < 0) throw IOException("closed inside chunk")
+        left -= n
+        if (left == 0L) line()
+        return n
+    }
 }

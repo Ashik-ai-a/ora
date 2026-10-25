@@ -77,15 +77,37 @@
       <p class="empty">Add <b>Send to <span class="peerName">Android</span></b> to the iPhone Share sheet, and copy-paste with a double-tap on the back of the iPhone. You only do this once.</p>
       <button id="makeKey" class="pill wide" type="button">Set up one-tap sharing</button>
       <div id="keyBox" hidden>
+        <h3>1. Send to <span class="peerName">Android</span> (Share sheet)</h3>
         <ol class="steps">
-          <li>Open <b>Shortcuts</b> → <b>+</b>. Add <b>Get Contents of URL</b>.</li>
-          <li>URL: <code id="uploadUrl"></code> <button class="pill small" data-copy="uploadUrl" type="button">Copy</button></li>
-          <li>Method <b>POST</b>. Header <b>Authorization</b> = <code id="authValue"></code> <button class="pill small" data-copy="authValue" type="button">Copy</button></li>
-          <li>Request Body: <b>File</b> → <b>Shortcut Input</b>. Wrap it in <b>Repeat with Each</b> for several photos.</li>
-          <li>Tap ⓘ → turn on <b>Show in Share Sheet</b>. Name it <b>Send to <span class="peerName">Android</span></b>.</li>
-          <li>For copy-paste, make a second shortcut: <b>Get Clipboard</b> → <b>Get Contents of URL</b> to <code id="clipUrl"></code> <button class="pill small" data-copy="clipUrl" type="button">Copy</button> with the same header, then Settings → Accessibility → Touch → <b>Back Tap</b> → Double Tap → that shortcut.</li>
+          <li>Open <b>Shortcuts</b>, tap <b>+</b>, then <b>Add Action</b> and search <b>Get Contents of URL</b>.</li>
+          <li>Tap <b>URL</b> and paste: <code id="uploadUrl"></code> <button class="pill small" data-copy="uploadUrl" type="button">Copy</button></li>
+          <li>Tap the <b>&gt;</b> arrow to show more. Set <b>Method</b> to <b>POST</b>.</li>
+          <li><b>Headers</b> → <b>Add new header</b>. Key: <code>Authorization</code>. Text: <code id="authValue"></code> <button class="pill small" data-copy="authValue" type="button">Copy</button></li>
+          <li><b>Request Body</b> → <b>File</b>. Tap <b>File</b> and choose <b>Shortcut Input</b>.</li>
+          <li>Tap the name at the top → <b>Rename</b> to <b>Send to <span class="peerName">Android</span></b>. Tap ⓘ and turn on <b>Show in Share Sheet</b>.</li>
         </ol>
+        <h3>2. Paste to <span class="peerName">Android</span> (copy on iPhone, paste on Android)</h3>
+        <ol class="steps">
+          <li>New shortcut. Add <b>Get Clipboard</b>.</li>
+          <li>Add <b>Get Contents of URL</b> with this URL: <code id="clipUrl"></code> <button class="pill small" data-copy="clipUrl" type="button">Copy</button> Method <b>POST</b>, and the same <b>Authorization</b> header.</li>
+          <li class="key-step"><b>Request Body</b> → <b>File</b> → tap <b>File</b> and choose <b>Clipboard</b>. Without this the Shortcut runs but sends nothing.</li>
+          <li>Settings → Accessibility → Touch → <b>Back Tap</b> → <b>Double Tap</b> → choose this shortcut.</li>
+          <li>Test it: copy some text, double-tap the back of the iPhone. <span class="peerName">Android</span> shows <b>Copied from iPhone</b>. If it shows <b>Shortcut needs a fix</b>, that notification says what to change.</li>
+        </ol>
+        <p class="note">If <span class="peerName">Android</span> gets a new Wi-Fi address, update the URL in both shortcuts (or keep the phone on the same network address).</p>
       </div>
+    </div>
+  </section>
+
+  <section class="setup" aria-labelledby="homeTitle">
+    <h2 id="homeTitle">Airbox on your Home Screen</h2>
+    <div class="group">
+      <p class="empty">Open this page with one tap, like an app, and stay signed in. No scanning next time.</p>
+      <button id="makeHome" class="pill wide" type="button">Add to Home Screen</button>
+      <ol id="homeSteps" class="steps" hidden>
+        <li>Tap <b>Share</b> <svg class="inline-share" viewBox="0 0 16 18" aria-hidden="true"><path d="M8 1.5v10M4.5 5L8 1.5 11.5 5M4 8H2.5v8.5h11V8H12"/></svg> in Safari.</li>
+        <li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+      </ol>
     </div>
   </section>
 
