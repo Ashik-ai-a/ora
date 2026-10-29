@@ -70,7 +70,19 @@ def hhmm(s: str) -> tuple[int, int]:
     return int(h), int(m)
 
 
-def _get(url: str, timeout: int = 30) -> bytes:
+_last = [0.0]
+
+
+def _pace(gap: float = 0.4) -> None:
+    """At most one request per [gap] seconds: free endpoints refuse bursts."""
+    wait = _last[0] + gap - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    _last[0] = time.time()
+
+
+def _get(url: str, timeout: int = 20) -> bytes:
+    _pace()
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - fixed https hosts
         data = r.read()
@@ -110,12 +122,12 @@ def fetch_5m(symbol: str, cache: Path, days: int = 60, max_age_s: float = 240) -
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol)}.NS?{q}"
         for attempt in range(4):
             try:
-                path.write_bytes(_get(url))
+                path.write_bytes(_get(url.replace("query1", "query2") if attempt % 2 else url))
                 break
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     return []
-                time.sleep(3 * (attempt + 1))
+                time.sleep(2 * (attempt + 1))
             except (urllib.error.URLError, OSError):
                 time.sleep(2 * (attempt + 1))
         else:

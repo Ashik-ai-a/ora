@@ -49,6 +49,17 @@ def smallcap_universe(cache: Path) -> pd.DataFrame:
     return df.rename(columns={"Company Name": "name", "Industry": "industry", "Symbol": "symbol"})[["name", "industry", "symbol"]]
 
 
+_last_request = [0.0]
+
+
+def _pace(gap: float = 0.4) -> None:
+    """At most one request per [gap] seconds, so Yahoo doesn't answer "too many requests"."""
+    wait = _last_request[0] + gap - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    _last_request[0] = time.time()
+
+
 def yahoo_daily(ticker: str, cache: Path, years: int = 12, max_age_hours: float = 12) -> pd.DataFrame | None:
     """Daily close (split/dividend adjusted), raw close and volume. None if Yahoo has nothing."""
     cache.mkdir(parents=True, exist_ok=True)
@@ -58,11 +69,12 @@ def yahoo_daily(ticker: str, cache: Path, years: int = 12, max_age_hours: float 
         params = {"range": f"{years}y", "interval": "1d", "events": "div,split", "includeAdjustedClose": "true"}
         for attempt in range(4):
             try:
-                r = requests.get(url, params=params, headers=UA, timeout=30)
+                _pace()
+                r = requests.get(url.replace("query1", "query2") if attempt % 2 else url, params=params, headers=UA, timeout=20)
                 if r.status_code == 404:
                     return None
                 if r.status_code == 429:
-                    time.sleep(5 * (attempt + 1))
+                    time.sleep(3 * (attempt + 1))
                     continue
                 r.raise_for_status()
                 path.write_text(r.text)
@@ -85,7 +97,7 @@ def yahoo_daily(ticker: str, cache: Path, years: int = 12, max_age_hours: float 
     return df if len(df) else None
 
 
-def price_panel(symbols: list[str], cache: Path, years: int = 12, pause: float = 0.3) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+def price_panel(symbols: list[str], cache: Path, years: int = 12) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """(adjusted close, traded value in rupees, symbols with no data), one column per symbol."""
     adj, value, missing = {}, {}, []
     for i, s in enumerate(symbols):
@@ -95,9 +107,7 @@ def price_panel(symbols: list[str], cache: Path, years: int = 12, pause: float =
         else:
             adj[s] = df["adj"]
             value[s] = df["close"] * df["volume"].fillna(0)
-        if pause and not (cache / f"{s}.NS.json").exists():
-            time.sleep(pause)
-        if (i + 1) % 50 == 0:
+        if (i + 1) % 25 == 0:
             print(f"  prices: {i + 1}/{len(symbols)}", flush=True)
     a = pd.DataFrame(adj).sort_index()
     v = pd.DataFrame(value).reindex(a.index)
