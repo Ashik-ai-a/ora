@@ -1,0 +1,59 @@
+name: Day trade proof
+
+# Tests the NSE opening-range breakout rule on the Nifty Smallcap 250 over the ~60 days of
+# free 5-minute data, after Indian charges, for three targets, and publishes the reports on
+# the "daytrader" release. Saturdays, on pushes to the day trader, or by hand.
+on:
+  schedule:
+    - cron: "17 4 * * 6"
+  push:
+    paths:
+      - "daytrader/**"
+      - ".github/workflows/daytrader.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daytrader
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests
+        run: cd daytrader && python -m unittest discover -s tests -v
+      - uses: actions/cache@v4
+        with:
+          path: trader/cache
+          key: daytrader-cache-${{ github.run_id }}
+          restore-keys: daytrader-cache-
+      - name: Proof run (1R, 1.5R, 2R)
+        env:
+          PYTHONPATH: daytrader
+        run: |
+          for r in 1 1.5 2; do
+            python -m daytrader backtest --target-r "$r" --out "trader/report/r$r"
+          done
+      - name: Publish
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls trader/report/*/daytrade-report.md >/dev/null 2>&1 || exit 0
+          for r in 1 1.5 2; do
+            f="trader/report/r$r/daytrade-report.md"
+            test -f "$f" || continue
+            { echo "<!-- target ${r}R -->"; cat "$f"; echo; } >> "$GITHUB_STEP_SUMMARY"
+            cp "$f" "trader/report/daytrade-report-${r}R.md"
+          done
+          gh release view daytrader >/dev/null 2>&1 || gh release create daytrader --prerelease --title "Day trade proof (NSE)" \
+            --notes "Opening-range breakout on the Nifty Smallcap 250, last ~60 days, after Indian charges. One report per target." --target "$GITHUB_SHA"
+          gh release upload daytrader trader/report/daytrade-report-*R.md --clobber

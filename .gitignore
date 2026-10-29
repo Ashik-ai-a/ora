@@ -4,3 +4,6 @@ build/
 *.iml
 local.properties
 .kotlin/
+
+# Day trader state (plans, journal, cache)
+/trader/
