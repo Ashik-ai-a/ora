@@ -1,0 +1,25 @@
+name: Data probe
+
+# Can GitHub's runners reach the free market-data sources? Prints status codes only.
+on:
+  push:
+    paths:
+      - ".github/workflows/data-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+          probe() { printf '%-70s ' "$1"; curl -s -o /tmp/out -w '%{http_code} %{size_download}B\n' -A "$UA" --max-time 20 "$1"; head -c 160 /tmp/out | tr '\n' ' '; echo; }
+          for i in 1 2 3; do
+            probe "https://query1.finance.yahoo.com/v8/finance/chart/RADICO.NS?range=5d&interval=5m"
+            probe "https://query2.finance.yahoo.com/v8/finance/chart/RADICO.NS?range=10y&interval=1d"
+            sleep 1
+          done
+          probe "https://www.niftyindices.com/IndexConstituent/ind_niftymidsmallcap400list.csv"
+          probe "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv"
+          probe "https://stooq.com/q/d/l/?s=radico.in&i=d"
