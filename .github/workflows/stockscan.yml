@@ -4,8 +4,6 @@ name: Small-cap scan
 # report.md to the "stockscan" release. With the NTFY_TOPIC secret set, the phone gets the
 # monthly buy list and any switch to or from cash.
 on:
-  schedule:
-    - cron: "30 11 * * 1-5"
   push:
     paths:
       - "stockscan/**"
@@ -41,12 +39,14 @@ jobs:
           path: stockscan/data
           key: stockscan-data-${{ github.run_id }}
           restore-keys: stockscan-data-
+      # Yahoo refuses GitHub's servers (429), so data runs are by hand only; the app runs them on the phone.
       - name: Backtest and scan
+        if: github.event_name == 'workflow_dispatch'
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python -m stockscan --capital 150000 --data data --out report
       - name: Publish report
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

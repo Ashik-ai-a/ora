@@ -72,6 +72,13 @@ import app.airbox.android.platform.RecentTransfer
 import app.airbox.android.platform.TextMessage
 import app.airbox.android.platform.TimeLabel
 import app.airbox.android.platform.UriOutgoingFile
+import app.airbox.android.ui.terminal.Fn
+import app.airbox.android.ui.terminal.IntradayScreen
+import app.airbox.android.ui.terminal.MomentumScreen
+import app.airbox.android.ui.terminal.MonitorScreen
+import app.airbox.android.ui.terminal.ProofScreen
+import app.airbox.android.ui.terminal.RiskScreen
+import app.airbox.android.ui.terminal.TerminalChrome
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -81,7 +88,29 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AirboxService.start(this)
         TimeLabel.is24h = android.text.format.DateFormat.is24HourFormat(this)
-        setContent { AirboxTheme { Home() } }
+        app.airbox.android.platform.MarketsStore.attach(applicationContext)
+        setContent { AirboxTheme { AppShell() } }
+    }
+}
+
+/**
+ * The terminal (F1-F5) with Airbox sharing as F6. A share arriving from the iPhone jumps to
+ * SHARE, where the Accept / Decline prompt lives.
+ */
+@Composable
+private fun AppShell() {
+    val state by AirboxState.flow.collectAsStateWithLifecycle()
+    var tab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(Fn.MON) }
+    LaunchedEffect(state.prompts.size) { if (state.prompts.isNotEmpty()) tab = Fn.SHARE }
+    TerminalChrome(tab, { tab = it }) {
+        when (tab) {
+            Fn.MON -> MonitorScreen()
+            Fn.MOM -> MomentumScreen()
+            Fn.ORB -> IntradayScreen()
+            Fn.PROOF -> ProofScreen()
+            Fn.RISK -> RiskScreen()
+            Fn.SHARE -> Home()
+        }
     }
 }
 

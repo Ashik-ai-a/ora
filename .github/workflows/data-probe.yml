@@ -2,9 +2,6 @@ name: Data probe
 
 # Can GitHub's runners reach the free market-data sources? Prints status codes only.
 on:
-  push:
-    paths:
-      - ".github/workflows/data-probe.yml"
   workflow_dispatch:
 
 jobs:

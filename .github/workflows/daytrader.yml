@@ -4,8 +4,6 @@ name: Day trade proof
 # free 5-minute data, after Indian charges, for three targets, and publishes the reports on
 # the "daytrader" release. Saturdays, on pushes to the day trader, or by hand.
 on:
-  schedule:
-    - cron: "17 4 * * 6"
   push:
     paths:
       - "daytrader/**"
@@ -35,7 +33,9 @@ jobs:
           path: trader/cache
           key: daytrader-cache-${{ github.run_id }}
           restore-keys: daytrader-cache-
+      # Yahoo refuses GitHub's servers (429), so data runs are by hand only; the app runs them on the phone.
       - name: Proof run (1R, 1.5R, 2R)
+        if: github.event_name == 'workflow_dispatch'
         env:
           PYTHONPATH: daytrader
         run: |
@@ -43,7 +43,7 @@ jobs:
             python -m daytrader backtest --target-r "$r" --out "trader/report/r$r"
           done
       - name: Publish
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
