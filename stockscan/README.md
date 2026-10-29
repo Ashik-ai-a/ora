@@ -1,6 +1,6 @@
 # Small-cap momentum scan
 
-A mechanical screen of the Nifty Smallcap 250, tested on ~12 years of prices before it
+A mechanical screen of the Nifty MidSmallcap 400 (mid and small caps only), tested on ~12 years of prices before it
 tells you anything. It runs on GitHub every weekday after the market closes and publishes
 `report.md` to the **stockscan** release of this repository.
 

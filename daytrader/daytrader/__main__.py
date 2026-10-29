@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> None:
         return p
 
     p = common(sub.add_parser("scan"))
-    p.add_argument("--universe", default="smallcap250", choices=list(nse.INDEX_FILES))
+    p.add_argument("--universe", default="midsmall400", choices=list(nse.INDEX_FILES))
     p.add_argument("--min-traded-cr", type=float, default=10, dest="min_traded_cr")
     p.add_argument("--top", type=int, default=20)
     p.add_argument("--write", action="store_true")
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--symbol", required=True)
     p.add_argument("--price", type=float, required=True)
     p = common(sub.add_parser("backtest"), when=False)
-    p.add_argument("--universe", default="smallcap250", choices=list(nse.INDEX_FILES))
+    p.add_argument("--universe", default="midsmall400", choices=list(nse.INDEX_FILES))
     p.add_argument("--min-traded-cr", type=float, default=10, dest="min_traded_cr")
     p.add_argument("--out", default="trader/report")
 

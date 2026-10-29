@@ -12,9 +12,9 @@ argument-hint: "[universe] [--target-r 2] [--shorts]"
 # nse-backtest
 
 ```bash
-PYTHONPATH=daytrader python3 -m daytrader backtest                                   # Smallcap 250, default rule (1.5R)
+PYTHONPATH=daytrader python3 -m daytrader backtest                                   # MidSmallcap 400, default rule (1.5R)
 PYTHONPATH=daytrader python3 -m daytrader backtest --target-r 2 --stop-rule or-far   # try a variant
-PYTHONPATH=daytrader python3 -m daytrader backtest --universe nifty500 --shorts
+PYTHONPATH=daytrader python3 -m daytrader backtest --universe smallcap250 --shorts
 ```
 
 It downloads ~60 days of 5-minute bars for every stock (a few minutes), then writes

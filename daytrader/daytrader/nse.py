@@ -30,10 +30,9 @@ BARS_PER_DAY = 75
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
 
 INDEX_FILES = {
+    "midsmall400": "ind_niftymidsmallcap400list.csv",  # Midcap 150 + Smallcap 250: no large caps
     "smallcap250": "ind_niftysmallcap250list.csv",
     "midcap150": "ind_niftymidcap150list.csv",
-    "nifty500": "ind_nifty500list.csv",
-    "nifty100": "ind_nifty100list.csv",
 }
 INDEX_HOSTS = [
     "https://www.niftyindices.com/IndexConstituent/",
@@ -90,7 +89,18 @@ def _get(url: str, timeout: int = 20) -> bytes:
 
 
 def universe(name: str, cache: Path) -> list[dict]:
-    """[{symbol, name, industry}] for an NSE index (smallcap250, midcap150, nifty500, nifty100)."""
+    """[{symbol, name, industry}] for an NSE index (midsmall400, smallcap250, midcap150, ...)."""
+    if name == "midsmall400":
+        try:
+            return _index(name, cache)
+        except SystemExit:
+            # Same members, built from the two halves.
+            rows = _index("midcap150", cache) + _index("smallcap250", cache)
+            return list({r["symbol"]: r for r in rows}.values())
+    return _index(name, cache)
+
+
+def _index(name: str, cache: Path) -> list[dict]:
     if name not in INDEX_FILES:
         raise SystemExit(f"Unknown universe {name!r}. Choose one of: {', '.join(INDEX_FILES)}")
     cache.mkdir(parents=True, exist_ok=True)

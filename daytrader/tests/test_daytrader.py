@@ -176,7 +176,7 @@ class Commands(unittest.TestCase):
             state = Path(tmp)
             cache = state / "cache"
             cache.mkdir()
-            (cache / nse.INDEX_FILES["smallcap250"]).write_text("Company Name,Industry,Symbol\nAbc Ltd,Test,ABC\nQuiet Ltd,Test,QUIET\n")
+            (cache / nse.INDEX_FILES["midsmall400"]).write_text("Company Name,Industry,Symbol\nAbc Ltd,Test,ABC\nQuiet Ltd,Test,QUIET\n")
             today = date(2026, 10, 20)
             days, d = [], today
             while len(days) < 30:

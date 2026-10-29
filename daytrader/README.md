@@ -5,7 +5,7 @@ Six Claude skills for intraday trading on NSE, plus the plain Python behind them
 
 | skill | what it does |
 | --- | --- |
-| `/nse-scanner` | opening-range breakouts right now on the Nifty Smallcap 250 (or 500, Midcap 150...) |
+| `/nse-scanner` | opening-range breakouts right now on the Nifty MidSmallcap 400 (mid and small caps only) |
 | `/nse-plan` | entry, stop-loss, target and the 15:15 exit, written down before you trade |
 | `/nse-timemachine` | 10,000 replays of the rest of the day + the real history, after charges |
 | `/nse-size` | shares for your max loss, with every Indian charge, as an order ticket |

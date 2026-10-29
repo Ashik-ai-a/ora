@@ -1,6 +1,6 @@
 """python -m stockscan [--capital 150000] [--out report] [--data data]
 
-Downloads the Nifty Smallcap 250 and ~12 years of prices, backtests the momentum rules,
+Downloads the Nifty MidSmallcap 400 (mid and small caps only) and ~12 years of prices, backtests the momentum rules,
 runs today's scan, and writes report.md + picks.json. With NTFY_TOPIC set, it also pushes a
 phone notification when the picks change (https://ntfy.sh, free app on Android and iPhone).
 """
@@ -38,7 +38,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    print("Universe: Nifty Smallcap 250", flush=True)
+    print("Universe: Nifty MidSmallcap 400 (mid and small caps only)", flush=True)
     uni = data.smallcap_universe(args.data)
     names = dict(zip(uni.symbol, uni.name))
     industries = dict(zip(uni.symbol, uni.industry))
@@ -52,7 +52,7 @@ def main() -> None:
     eq = res.equity
     ew = market_index(adj).loc[eq.index[0]:]
     lines = []
-    compare = {"Momentum strategy (top 10, monthly)": eq, "All 250 small caps, equal weight": ew}
+    compare = {"Momentum strategy (top 10, monthly)": eq, "All mid and small caps, equal weight": ew}
     for name, s in bench.items():
         compare[name] = s.dropna().loc[eq.index[0]:]
     rows = []
@@ -100,9 +100,9 @@ def main() -> None:
     reasons = sc.reason[~sc.eligible].value_counts()
 
     lines += [
-        "# Small-cap momentum scan",
+        "# Mid and small-cap momentum scan",
         "",
-        f"Data to **{today.date()}**. {adj.shape[1]} of {len(uni)} Nifty Smallcap 250 stocks had prices"
+        f"Data to **{today.date()}**. {adj.shape[1]} of {len(uni)} Nifty MidSmallcap 400 stocks (mid and small caps only) had prices"
         + (f" (missing: {', '.join(missing[:15])}{'...' if len(missing) > 15 else ''})." if missing else "."),
         "",
         "## Would it have made money?",
@@ -115,7 +115,7 @@ def main() -> None:
         f"Average share of the portfolio replaced each month: {pct0(res.turnover)}. "
         f"Months that ended up: {pct0(m['months_up'])}.",
         "",
-        "**Read this before trusting the numbers:** the test uses *today's* Smallcap 250 list. Companies that "
+        "**Read this before trusting the numbers:** the test uses *today's* MidSmallcap 400 list. Companies that "
         "collapsed or were delisted over these years are not in it, and some of today's members were tiny "
         "stocks that rose into the index. Both make any small-cap backtest look better than real life "
         "(survivorship bias). Treat these returns as an upper bound, and the worst-fall column as a floor: "

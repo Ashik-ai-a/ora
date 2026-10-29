@@ -1,4 +1,4 @@
-"""Market data: the Nifty Smallcap 250 list and daily prices.
+"""Market data: the Nifty MidSmallcap 400 list (mid and small caps only) and daily prices.
 
 Free sources, so they can break: the index list comes from NSE's index site and prices from
 Yahoo Finance's public chart endpoint (NSE symbols with a .NS suffix). Everything downloaded
@@ -17,34 +17,43 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"}
 
-UNIVERSE_URLS = [
-    "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv",
-    "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
-    "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+# Small and mid caps only: the Nifty MidSmallcap 400 (= Midcap 150 + Smallcap 250).
+HOSTS = [
+    "https://www.niftyindices.com/IndexConstituent/",
+    "https://nsearchives.nseindia.com/content/indices/",
+    "https://archives.nseindia.com/content/indices/",
 ]
+UNIVERSE_FILES = [["ind_niftymidsmallcap400list.csv"], ["ind_niftymidcap150list.csv", "ind_niftysmallcap250list.csv"]]
 
 # Benchmarks on Yahoo: Nifty Smallcap 100 and Nifty 50. Missing ones are skipped.
 BENCHMARKS = {"Nifty Smallcap 100": "^CNXSC", "Nifty 50": "^NSEI"}
 
 
-def smallcap_universe(cache: Path) -> pd.DataFrame:
-    """Company name, industry and NSE symbol of today's Nifty Smallcap 250 members."""
-    cache.mkdir(parents=True, exist_ok=True)
-    path = cache / "smallcap250.csv"
-    errors = []
-    for url in UNIVERSE_URLS:
+def _download_csv(name: str) -> pd.DataFrame | None:
+    for host in HOSTS:
         try:
-            r = requests.get(url, headers=UA, timeout=30)
+            r = requests.get(host + name, headers=UA, timeout=30)
             r.raise_for_status()
             df = pd.read_csv(io.StringIO(r.text))
-            if "Symbol" in df.columns and len(df) > 200:
-                df.to_csv(path, index=False)
+            if "Symbol" in df.columns and len(df) > 100:
+                return df
+        except Exception:  # noqa: BLE001 - try the next mirror
+            continue
+    return None
+
+
+def smallcap_universe(cache: Path) -> pd.DataFrame:
+    """Company name, industry and NSE symbol of today's Nifty MidSmallcap 400 members."""
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / "midsmall400.csv"
+    if not path.exists() or time.time() - path.stat().st_mtime > 7 * 86400:
+        for files in UNIVERSE_FILES:
+            parts = [_download_csv(f) for f in files]
+            if all(p is not None for p in parts):
+                pd.concat(parts).drop_duplicates("Symbol").to_csv(path, index=False)
                 break
-            errors.append(f"{url}: unexpected file")
-        except Exception as e:  # noqa: BLE001 - try the next mirror
-            errors.append(f"{url}: {e}")
     if not path.exists():
-        raise RuntimeError("Could not download the Nifty Smallcap 250 list:\n" + "\n".join(errors))
+        raise RuntimeError("Could not download the Nifty MidSmallcap 400 list (or Midcap 150 + Smallcap 250).")
     df = pd.read_csv(path)
     return df.rename(columns={"Company Name": "name", "Industry": "industry", "Symbol": "symbol"})[["name", "industry", "symbol"]]
 

@@ -1,6 +1,6 @@
 name: Day trade proof
 
-# Tests the NSE opening-range breakout rule on the Nifty Smallcap 250 over the ~60 days of
+# Tests the NSE opening-range breakout rule on the Nifty MidSmallcap 400 over the ~60 days of
 # free 5-minute data, after Indian charges, for three targets, and publishes the reports on
 # the "daytrader" release. Saturdays, on pushes to the day trader, or by hand.
 on:
@@ -55,5 +55,5 @@ jobs:
             cp "$f" "trader/report/daytrade-report-${r}R.md"
           done
           gh release view daytrader >/dev/null 2>&1 || gh release create daytrader --prerelease --title "Day trade proof (NSE)" \
-            --notes "Opening-range breakout on the Nifty Smallcap 250, last ~60 days, after Indian charges. One report per target." --target "$GITHUB_SHA"
+            --notes "Opening-range breakout on the Nifty MidSmallcap 400, last ~60 days, after Indian charges. One report per target." --target "$GITHUB_SHA"
           gh release upload daytrader trader/report/daytrade-report-*R.md --clobber
